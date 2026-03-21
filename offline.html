@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sin conexión | Applebbes+</title>
+
+<link rel="icon" type="image/png" href="manzanas.png">
+
+<style>
+body{
+  margin:0;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  background:#0b0f19;
+  color:white;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  height:100vh;
+  text-align:center;
+}
+
+.card{
+  background:rgba(255,255,255,0.05);
+  border:1px solid rgba(255,255,255,0.1);
+  backdrop-filter: blur(10px);
+  padding:40px;
+  border-radius:20px;
+  max-width:420px;
+  box-shadow:0 10px 40px rgba(0,0,0,0.5);
+}
+
+.logo{
+  width:80px;
+  margin-bottom:20px;
+}
+
+h1{
+  margin-bottom:10px;
+}
+
+p{
+  opacity:.85;
+}
+
+button{
+  margin-top:20px;
+  padding:12px 20px;
+  border:none;
+  border-radius:12px;
+  background:#e11d48;
+  color:white;
+  font-weight:bold;
+  cursor:pointer;
+}
+</style>
+</head>
+
+<body>
+
+<div class="card">
+  <img src="manzanas.png" class="logo" alt="Applebbes+">
+
+  <h1>Sin conexión</h1>
+  <p>No hay internet en este momento.</p>
+  <p>Cuando vuelva la conexión podrás seguir usando Applebbes+.</p>
+
+  <button onclick="location.reload()">
+    Reintentar
+  </button>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Iniciar Sesión - Applebee's</title>
+
+  <link rel="icon" type="image/png" sizes="32x32" href="manzanas.png">
+  <link rel="stylesheet" href="style.css" />
+
+  <!-- ✅ PWA -->
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#0b0f19">
+  <!-- iOS icon (usa tu icono de 192 o el que tengas) -->
+  <link rel="apple-touch-icon" href="manzanas.png">
+  <!-- iOS: permite modo standalone -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+</head>
+
+<body>
+  <!-- ❄️ CANVAS PARA EFECTO NIEVE -->
+  <canvas id="snowCanvas"></canvas>
+
+  <!-- ✅ Banner instalar (Android + iPhone) -->
+  <div id="installBox" class="pwa-install" aria-live="polite">
+    <div class="pwa-row">
+      <div class="pwa-text">
+        <div class="pwa-title">Instala la app</div>
+        <div class="pwa-sub">Queda en tu pantalla de inicio.</div>
+      </div>
+
+      <button id="btnInstall" class="pwa-btn" style="display:none" type="button">
+        Instalar
+      </button>
+    </div>
+
+    <div id="iosHint" class="pwa-ios" style="display:none">
+      En iPhone: abre en <b>Safari</b> → <b>Compartir</b> → <b>Agregar a pantalla de inicio</b>.
+    </div>
+  </div>
+
+  <div class="container">
+    <div class="form-card">
+      <h1>Iniciar Sesión</h1>
+
+      <div class="field-group">
+        <input
+          type="text"
+          id="emailOrPhone"
+          placeholder="Correo o teléfono"
+          autocomplete="username"
+        />
+        <span class="tooltip">❓
+          <span class="tooltiptext">
+            Puedes ingresar tu correo electrónico o número de teléfono registrado.
+          </span>
+        </span>
+      </div>
+
+      <input
+        type="password"
+        id="password"
+        placeholder="Contraseña"
+        autocomplete="current-password"
+      />
+
+      <button id="btnLogin">Entrar</button>
+
+      <p class="link">
+        ¿No tienes cuenta? <a href="register.html">Crear una nueva</a>
+      </p>
+
+      <p class="link">
+        <a href="#" id="lnkReset">¿Olvidaste tu contraseña?</a>
+      </p>
+    </div>
+  </div>
+
+  <!-- 🎄🎉 CAMBIO AUTOMÁTICO DE FONDO -->
+  <script>
+  (() => {
+    const IMG_NORMAL     = "LogoApplebees.png";
+    const IMG_NAVIDAD    = "imageapplenavidad.png";
+    const IMG_ANIO_NUEVO = "imageanonuevo.png";
+
+    const snowCanvas = document.getElementById("snowCanvas");
+
+    const today = new Date();
+    today.setHours(0,0,0,0);
+    const y = today.getFullYear();
+
+    const navStart = new Date(y, 11, 18);
+    const navEnd   = new Date(y, 11, 31);
+
+    const newYearStart = new Date(y + 1, 0, 1);
+    const newYearEnd   = new Date(y + 1, 0, 14);
+
+    let bg = IMG_NORMAL;
+    let showSnow = false;
+
+    if (today >= navStart && today <= navEnd) {
+      bg = IMG_NAVIDAD;
+      showSnow = true;
+    }
+    else if (today >= newYearStart && today <= newYearEnd) {
+      bg = IMG_ANIO_NUEVO;
+      showSnow = true;
+    }
+    document.body.style.backgroundImage = `url("${bg}")`;
+
+    // ❄️ Mostrar u ocultar nieve
+    snowCanvas.style.display = showSnow ? "block" : "none";
+  })();
+  </script>
+
+  <!-- ❄️ EFECTO NIEVE -->
+  <script>
+  (() => {
+    const canvas = document.getElementById("snowCanvas");
+    const ctx = canvas.getContext("2d");
+
+    let w, h;
+    const flakes = [];
+    const FLAKE_COUNT = 120;
+
+    function resize() {
+      w = canvas.width  = window.innerWidth;
+      h = canvas.height = window.innerHeight;
+    }
+    window.addEventListener("resize", resize);
+    resize();
+
+    function createFlake() {
+      return {
+        x: Math.random() * w,
+        y: Math.random() * h,
+        r: Math.random() * 3 + 1,
+        d: Math.random() * 1 + 0.5,
+        s: Math.random() * 0.5 + 0.2
+      };
+    }
+
+    for (let i = 0; i < FLAKE_COUNT; i++) flakes.push(createFlake());
+
+    function draw() {
+      ctx.clearRect(0, 0, w, h);
+      ctx.fillStyle = "rgba(255,255,255,0.85)";
+      ctx.beginPath();
+
+      for (const f of flakes) {
+        ctx.moveTo(f.x, f.y);
+        ctx.arc(f.x, f.y, f.r, 0, Math.PI * 2);
+      }
+      ctx.fill();
+      update();
+      requestAnimationFrame(draw);
+    }
+
+    function update() {
+      for (const f of flakes) {
+        f.y += f.d;
+        f.x += Math.sin(f.y * f.s);
+
+        if (f.y > h) {
+          f.y = -5;
+          f.x = Math.random() * w;
+        }
+      }
+    }
+    draw();
+  })();
+  </script>
+
+  <!-- 🧠 TOOLTIP TÁCTIL -->
+  <script>
+  document.querySelectorAll('.tooltip').forEach(tip => {
+    tip.addEventListener('click', e => {
+      e.stopPropagation();
+      document.querySelectorAll('.tooltip.active').forEach(t => {
+        if (t !== tip) t.classList.remove('active');
+      });
+      tip.classList.toggle('active');
+    });
+  });
+
+  document.addEventListener('click', () => {
+    document.querySelectorAll('.tooltip.active').forEach(t => t.classList.remove('active'));
+  });
+  </script>
+
+  <!-- ✅ PWA: install prompt + iOS hint -->
+  <script>
+  (() => {
+    let deferredPrompt = null;
+
+    const btn = document.getElementById("btnInstall");
+    const iosHint = document.getElementById("iosHint");
+    const installBox = document.getElementById("installBox");
+
+    const ua = navigator.userAgent || "";
+    const isIOS = /iphone|ipad|ipod/i.test(ua);
+    const isInStandalone =
+      window.matchMedia("(display-mode: standalone)").matches ||
+      window.navigator.standalone === true;
+
+    // iOS: mostrar hint si no está instalada
+    if (isIOS && !isInStandalone) {
+      iosHint.style.display = "block";
+    }
+
+    // Android/Chrome: capturar evento de instalación
+    window.addEventListener("beforeinstallprompt", (e) => {
+      e.preventDefault();
+      deferredPrompt = e;
+      if (btn) btn.style.display = "inline-flex";
+    });
+
+    btn?.addEventListener("click", async () => {
+      if (!deferredPrompt) return;
+      deferredPrompt.prompt();
+      await deferredPrompt.userChoice;
+      deferredPrompt = null;
+      btn.style.display = "none";
+    });
+
+    // Si ya está instalada, ocultar banner completo
+    if (isInStandalone && installBox) {
+      installBox.style.display = "none";
+    }
+  })();
+  </script>
+
+  <!-- ✅ PWA: registrar service worker -->
+  <script>
+  if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("/service-worker.js");
+
+  }
+  </script>
+
+  <!-- 🔥 FIREBASE -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+
+  <script src="firebase-config.js"></script>
+  <script src="auth.js"></script>
+
+  <!-- ✅ Estilos mínimos del banner PWA (si prefieres, lo pasamos a tu style.css) -->
+  <style>
+    .pwa-install{
+      max-width: 520px;
+      margin: 12px auto 0;
+      padding: 12px 14px;
+      border-radius: 16px;
+      background: rgba(10,12,18,.55);
+      border: 1px solid rgba(255,255,255,.12);
+      backdrop-filter: blur(10px);
+      color:#fff;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    }
+    .pwa-row{display:flex; align-items:center; justify-content:space-between; gap:12px;}
+    .pwa-title{font-weight:800; letter-spacing:.2px;}
+    .pwa-sub{opacity:.85; font-size:14px; margin-top:2px;}
+    .pwa-btn{
+      padding: 10px 14px;
+      border-radius: 14px;
+      border: 0;
+      cursor:pointer;
+      font-weight:800;
+      background:#e11d48;
+      color:#fff;
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      white-space:nowrap;
+    }
+    .pwa-ios{margin-top:10px; font-size:14px; opacity:.92; line-height:1.25;}
+  </style>
+
+</body>
+</html>

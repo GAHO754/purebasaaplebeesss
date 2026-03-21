@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Usar saldo</title>
+  <link rel="icon" type="image/png" sizes="32x32" href="manzanas.png">
+  <link rel="stylesheet" href="registrar.css" />
+
+  <!-- Firebase (Compat) -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+  <script src="firebase-config.js"></script>
+
+  <!-- QRCode (CDN) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+
+  <style>
+    .page { max-width: 980px; margin: 110px auto 60px; padding: 16px; }
+    .page h2 { margin-bottom: 10px; }
+    .stat-line { margin: 12px 0 8px; font-weight: 700; }
+    .subline { margin: 0 0 18px; opacity: .9; }
+    .warn { color:#ffdfaa; } .ok{color:#64db64;} .err{color:#ff9a9a;}
+
+    table { width:100%; border-collapse: collapse; font-size:14px;
+      background: rgba(25,25,25,.6); border:1px solid rgba(255,255,255,.08);
+      border-radius:12px; overflow:hidden; margin-bottom: 18px; }
+    th, td { padding:10px 8px; border-bottom:1px solid rgba(255,255,255,.08); }
+    th { text-align:left; color:#ffd4d4; }
+
+    .rewards { display:grid; grid-template-columns: repeat(auto-fit,minmax(220px,1fr)); gap:12px; }
+    .reward-card {
+      background: rgba(25,25,25,.7); border:1px solid rgba(255,255,255,.08);
+      border-radius:14px; padding:16px; display:flex; flex-direction:column; gap:10px;
+    }
+    .reward-card h4 { margin:0; }
+    .reward-card .cost { font-weight:700; color:#ffd4d4; }
+    .reward-card .btn-cta { align-self:flex-start; }
+    .reward-card a, .reward-card button { text-decoration:none; }
+
+    /* QR principal (más grande) */
+    .qr-box{ display:none; margin-top:20px; padding:16px;
+      background: rgba(25,25,25,.7); border:1px solid rgba(255,255,255,.08);
+      border-radius:16px; }
+    .qr-row{ display:flex; gap:18px; align-items:center; flex-wrap:wrap; }
+    #qrcode{ width:320px; height:320px; background:#fff; padding:8px; border-radius:8px; }
+    @media (max-width:600px){
+      #qrcode{ width:260px; height:260px; }
+    }
+    .qr-info small{ opacity:.85; }
+    .qr-actions{ margin-top: 14px; display:flex; gap:10px; flex-wrap:wrap; }
+
+    /* Historial */
+    .hist { margin-top: 26px; }
+    .hist-grid { display:grid; grid-template-columns: repeat(auto-fit,minmax(260px,1fr)); gap:12px; }
+    .hist-card {
+      background: rgba(25,25,25,.7); border:1px solid rgba(255,255,255,.08);
+      border-radius:14px; padding:14px; display:flex; flex-direction:column; gap:10px;
+    }
+    .chip { padding:2px 8px; border-radius:999px; font-weight:700; font-size:12px; width:max-content; }
+    .chip-ok{   background: rgba(155,228,155,.15); color:#9be49b; border:1px solid rgba(155,228,155,.35); }
+    .chip-warn{ background: rgba(255,223,170,.15); color:#ffdfaa; border:1px solid rgba(255,223,170,.35); }
+    .chip-err{  background: rgba(255,154,154,.15); color:#ff9a9a; border:1px solid rgba(255,154,154,.35); }
+
+    .hist-qr-wrap{ display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+    .hist-qr { width:180px; height:180px; background:#fff; padding:6px; border-radius:8px; }
+    @media (max-width:600px){ .hist-qr{ width:160px; height:160px; } }
+    .hist-actions { display:flex; gap:8px; flex-wrap:wrap; }
+
+    .link-back--pill { color:#fff; background:#01720b; border:2px solid #01720b; padding:7px 14px; border-radius:10px; font-weight:700; text-decoration:none; }
+    .top-bar a, .top-bar a:link, .top-bar a:visited, .top-bar a:hover, .top-bar a:focus { text-decoration:none!important; border-bottom:none!important; box-shadow:none!important; background-image:none!important; }
+
+    /* Modal responsivo del QR */
+    .qr-fullscreen {
+      display:none; position:fixed; inset:0; z-index:9999;
+      background: rgba(0,0,0,.92); backdrop-filter: blur(2px);
+      align-items:center; justify-content:center; padding:20px;
+    }
+    .qr-fullscreen__img {
+      max-width:92vw;
+      max-height:82vh;
+      width:auto; height:auto;
+      background:#fff; border-radius:12px; padding:14px;
+      box-shadow: 0 0 30px rgba(240,53,53,.45);
+      display:block;
+    }
+    .qr-fullscreen__close {
+      position:absolute; top:20px; right:20px;
+      background:#f03535; color:#fff; border:0; border-radius:10px;
+      padding:10px 16px; font-weight:700; cursor:pointer;
+    }
+    .qr-fullscreen__hint {
+      position:absolute; bottom:22px; left:50%; transform:translateX(-50%);
+      color:#fff; opacity:.8; font-size:14px; text-align:center;
+    }
+  </style>
+</head>
+<body class="bg-animated page-canjear">
+
+  <header class="top-bar">
+    <div class="center-section"><p></p></div>
+    <div class="right-section">
+      <a href="panel.html" class="link-back--pill"> Regresar</a>
+    </div>
+  </header>
+
+  <main class="page">
+    <h2>Mi saldo</h2>
+
+    <!-- ✅ TABLA ELIMINADA (Saldo / Vence / Estatus) -->
+
+    <div class="stat-line">
+      Actualmente tienes <span id="puntosActivos" class="ok" data-value="0">0</span> de Monedero electronico.
+      <small id="syncBadge" class="warn" style="display:none; font-weight:600; margin-left:6px;">(sincronizados)</small>
+    </div>
+    <div id="avisoVencen" class="warn subline"></div>
+    <div id="avisoReservados" class="warn subline"></div>
+
+    <h3 style="margin:18px 0 10px;">Puedes usar tu saldo en:</h3>
+    <section class="rewards" id="rewardsGrid"></section>
+
+    <!-- QR principal tras canjear -->
+    <section class="qr-box" id="qrBox">
+      <h3>Tu cupón</h3>
+      <div class="qr-row">
+        <div id="qrcode"></div>
+        <div class="qr-info">
+          <div><strong id="rewardName">Recompensa</strong></div>
+          <div>Costo: <span id="rewardCost">0</span></div>
+          <div>Válido hasta: <span id="qrExpires"></span> (3 días)</div>
+          <div>Código: <b id="couponCode" style="font-family:monospace"></b></div>
+          <div class="qr-actions">
+            <button id="btnOpenQR" class="btn-cta" type="button">Ver QR grande</button>
+            <a id="btnDownloadQR" class="btn-cta" href="#" style="display:none;">Descargar</a>
+          </div>
+          <small>Este QR es de un solo uso. Un gerente lo escaneará para validar y canjear.</small>
+        </div>
+      </div>
+    </section>
+
+    <section class="hist" id="hist">
+      <h3 style="margin:18px 0 10px;">Historial de cupones</h3>
+      <div id="histGrid" class="hist-grid"></div>
+      <div id="histEmpty" class="warn" style="display:none;">No tienes cupones aún.</div>
+    </section>
+  </main>
+
+  <!-- Modal QR grande -->
+  <div id="qrFullscreen" class="qr-fullscreen" aria-hidden="true">
+    <button id="qrFsClose" class="qr-fullscreen__close" type="button">Cerrar</button>
+    <img id="qrFsImg" class="qr-fullscreen__img" alt="Cupón QR">
+    <div class="qr-fullscreen__hint">Presenta este QR al Gerente para recibir tu cortesía.</div>
+  </div>
+
+  <script>
+  // ====== Firebase ======
+  if (!firebase.apps.length) {
+    console.error('Firebase no está inicializado. Revisa firebase-config.js');
+    alert('No se pudo inicializar Firebase. Verifica firebase-config.js');
+  }
+  const auth = firebase.auth();
+  const db   = firebase.database();
+
+  // ===============================
+  // ✅ LIVE EVENTS (para Live Monitor)
+  // ===============================
+  const STORE_ID   = "APB_PASEO";              // ✅ cámbialo por la sucursal real
+  const STORE_NAME = "Applebee’s Paseo Central";
+
+  async function pushLiveEvent(payload){
+    try{
+      const user = firebase.auth().currentUser;
+      const eventRef = db.ref("liveEvents").push();
+      const eventId = eventRef.key;
+
+      const now = Date.now();
+      const day = new Date(now);
+      const ymd = `${day.getFullYear()}${String(day.getMonth()+1).padStart(2,'0')}${String(day.getDate()).padStart(2,'0')}`;
+
+      const base = {
+        createdAt: now,
+        uid: user?.uid || "",
+        userEmail: user?.email || "",
+        brand: "Applebee’s",
+        storeId: STORE_ID,
+        storeName: STORE_NAME,
+        meta: {
+          source: "web",
+          page: location.pathname || "",
+          ua: navigator.userAgent || ""
+        }
+      };
+
+      await eventRef.set({ ...base, ...payload });
+      await db.ref(`liveEventsByDay/${ymd}/${eventId}`).set(true);
+
+      return eventId;
+    }catch(e){
+      console.warn("pushLiveEvent error:", e);
+      return "";
+    }
+  }
+
+  const $ = (id)=>document.getElementById(id);
+
+  function fmtMoney(n){
+    const v = Number(n||0);
+    return `$${v.toFixed(2)}`;
+  }
+
+  const REWARDS = [
+    { id:'limonada',     name:'Limonada 16 oz',       cost:10 },
+    { id:'ensalada',     name:'Ensalada Cesar',       cost:25 },
+    { id:'chicken-burg', name:'Hamburguesa de pollo', cost:32 },
+    { id:'hamburguesa',  name:'Hamburguesa sencilla', cost:300 },
+    { id:'brownie',      name:'Brownie con helado',   cost:450 },
+    { id:'combo-kids',   name:'Combo infantil',       cost:600 },
+  ];
+
+  function renderRewards(){
+    $('rewardsGrid').innerHTML = REWARDS.map(r => `
+      <article class="reward-card">
+        <h4>${r.name}</h4>
+        <div class="cost">${fmtMoney(r.cost)}</div>
+        <button class="btn-cta" data-reward="${r.id}" type="button">Generar QR</button>
+      </article>
+    `).join('');
+  }
+
+  function fmtDate(ms){ if(!ms) return ''; return new Date(ms).toLocaleDateString('es-MX',{year:'numeric',month:'2-digit',day:'2-digit'}); }
+  function daysLeft(ms){ if(!ms) return -999; return Math.ceil((ms - Date.now())/86400000); }
+
+  function getTicketPoints(t){
+    const p1 = Number(t.points || 0);
+    const p2 = Number(t.puntosTotal || 0);
+    const p3 = (t.puntos && typeof t.puntos === 'object') ? Number(t.puntos.total || 0) : Number(t.puntos || 0);
+    const pts = [p1,p2,p3].find(v => Number.isFinite(v) && v>0) || 0;
+    return pts;
+  }
+  function getTicketExpire(t){
+    return t.vencePuntos ? Number(t.vencePuntos) :
+           (t.createdAt ? Number(t.createdAt) + 180*86400000 : null);
+  }
+
+  let _tickets = [];
+  let _redemps = [];
+  let _pointsNode = 0;
+  let _syncedOnce = false;
+
+  function getDataURLFrom(el){
+    if (!el) return null;
+    const img = el.querySelector('img');
+    if (img && img.src && img.src.startsWith('data:image')) return img.src;
+    const canvas = el.querySelector('canvas');
+    if (canvas && canvas.toDataURL) return canvas.toDataURL('image/png');
+    return null;
+  }
+  function openQrFullscreenFromContainer(containerEl){
+    const dataURL = getDataURLFrom(containerEl);
+    if (!dataURL) { alert('Aún no está listo el QR. Intenta de nuevo en un momento.'); return; }
+    const modal = $('qrFullscreen'); const img = $('qrFsImg');
+    img.src = dataURL; modal.style.display = 'flex'; modal.setAttribute('aria-hidden','false');
+  }
+  (function bindQrModal(){
+    const modal = $('qrFullscreen'); const btnClose = $('qrFsClose');
+    btnClose.onclick = ()=>{ modal.style.display='none'; modal.setAttribute('aria-hidden','true'); };
+    modal.addEventListener('click', (e)=>{ if(e.target===modal) btnClose.click(); });
+  })();
+
+  function recalcAndRender() {
+    let saldoTicketsActivos = 0;
+    const proximos = [];
+
+    _tickets.forEach(t=>{
+      const pts = getTicketPoints(t);
+      if (!pts) return;
+      const vence = getTicketExpire(t);
+      const left  = daysLeft(vence);
+      const activo = left >= 0;
+      if (activo) {
+        saldoTicketsActivos += pts;
+        if (left <= 14) proximos.push({saldo:pts,left});
+      }
+    });
+
+    const now = Date.now();
+
+    const spent = _redemps
+      .filter(r => {
+        const s = String(r.status || '').toLowerCase();
+        return (s === 'canjeado' || s === 'redeemed');
+      })
+      .reduce((a,r)=> a + (Number(r.cost)||0), 0);
+
+    const reserved = _redemps
+      .filter(r => {
+        const s = String(r.status || '').toLowerCase();
+        return (s === 'pendiente' || s === 'pending');
+      })
+      .filter(r => !r.expiresAt || Number(r.expiresAt) > now)
+      .reduce((a,r)=> a + (Number(r.cost)||0), 0);
+
+    const calculatedAvailable = Math.max(0, saldoTicketsActivos - spent - reserved);
+
+    const span = $('puntosActivos');
+    span.textContent = fmtMoney(calculatedAvailable);
+    span.dataset.value = String(calculatedAvailable);
+
+    $('avisoVencen').textContent = proximos.length
+      ? `⚠️ ${fmtMoney(proximos.reduce((a,b)=>a+b.saldo,0))} vence en ~${Math.min(...proximos.map(p=>p.left))} día(s).`
+      : '';
+    $('avisoReservados').textContent = reserved > 0
+      ? `Tienes ${fmtMoney(reserved)} reservado en cupones pendientes.`
+      : '';
+
+    const badge = $('syncBadge');
+    if (!_syncedOnce && Number(_pointsNode||0) !== calculatedAvailable) {
+      const user = auth.currentUser;
+      if (user) {
+        _syncedOnce = true;
+        db.ref(`users/${user.uid}/points`).set(calculatedAvailable)
+          .then(()=>{ _pointsNode = calculatedAvailable; badge.style.display='inline'; })
+          .catch(()=>{});
+      }
+    } else {
+      badge.style.display='none';
+    }
+  }
+
+  function renderHistory(){
+    const grid = $('histGrid'), empty = $('histEmpty');
+    grid.innerHTML = '';
+    const now = Date.now();
+
+    const items = _redemps.filter(r=>{
+      const s = String(r.status||'').toLowerCase();
+      if (s==='pendiente' || s==='pending'){
+        if (r.expiresAt) return Number(r.expiresAt) > now;
+      }
+      return true;
+    });
+
+    if (!items.length){ empty.style.display='block'; return; }
+    empty.style.display='none';
+
+    items.forEach(d=>{
+      const id = d.code;
+      const expStr = fmtDate(d.expiresAt);
+      const s = String(d.status||'').toLowerCase();
+      const chipCls = (s==='pendiente' || s==='pending') ? 'chip-warn'
+                    : (s==='canjeado' || s==='redeemed') ? 'chip-ok'
+                    : 'chip-err';
+
+      const needsQR = (s === 'pendiente' || s === 'pending');
+      const qrBoxId = `qr-hist-${id}`, dlId=`dl-${id}`, bigId=`big-${id}`;
+      const rewardLabel = d.rewardName || d.rewardId;
+
+      grid.insertAdjacentHTML('beforeend', `
+        <article class="hist-card">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <strong>${rewardLabel}</strong>
+            <span class="chip ${chipCls}">${d.status}</span>
+          </div>
+          <div>Costo: <b>${fmtMoney(d.cost||0)}</b></div>
+          <div>Expira: <b>${expStr || '-'}</b></div>
+
+          ${needsQR ? `
+            <div class="hist-qr-wrap">
+              <div id="${qrBoxId}" class="hist-qr"></div>
+              <div class="hist-actions">
+                <button id="${bigId}" class="btn-cta" type="button">Ver QR grande</button>
+                <a id="${dlId}" class="btn-cta" href="#" style="display:none;">Descargar</a>
+              </div>
+            </div>
+            <div style="font-size:12px;opacity:.85">Código: <b style="font-family:monospace">${d.code}</b></div>
+          ` : `<div class="ok">Usado.</div>`}
+        </article>
+      `);
+
+      if (needsQR && d.qrPayload){
+        const el = document.getElementById(qrBoxId);
+        el.innerHTML = '';
+        const smallSize = Math.min(180, Math.floor(window.innerWidth * 0.70));
+        new QRCode(el, { text: d.qrPayload, width: smallSize, height: smallSize });
+
+        setTimeout(()=>{
+          const dataURL = getDataURLFrom(el);
+          const a = document.getElementById(dlId);
+          const big= document.getElementById(bigId);
+          if (dataURL){
+            const fileName = `cupon_${d.rewardId||'reward'}_${id}.png`;
+            a.href = dataURL; a.setAttribute('download', fileName); a.style.display='inline-flex';
+          }
+          big.onclick = ()=> openQrFullscreenFromContainer(el);
+        }, 80);
+      }
+    });
+  }
+
+  function prepareMainQrDownloadUI(fileName){
+    const a = $('btnDownloadQR');
+    const dataURL = getDataURLFrom(document.getElementById('qrcode'));
+    if (!dataURL){ setTimeout(()=>prepareMainQrDownloadUI(fileName), 60); return; }
+    a.href = dataURL; a.setAttribute('download', fileName); a.style.display='inline-flex';
+  }
+
+  function generarCodigo(len = 10) {
+    const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let out = '';
+    for (let i=0; i<len; i++) out += alphabet[Math.floor(Math.random()*alphabet.length)];
+    return out;
+  }
+
+  async function canjearReward(reward) {
+    const user = auth.currentUser;
+    if (!user) return alert('Debes iniciar sesión.');
+
+    // Anti doble click
+    const activeBtn = document.activeElement;
+    if (activeBtn && activeBtn.tagName === "BUTTON") {
+      activeBtn.disabled = true;
+      activeBtn.style.opacity = "0.7";
+    }
+
+    try {
+      const disponiblesUI = Number($('puntosActivos').dataset.value || 0);
+
+      // ✅ Evento opcional: bloqueo por saldo insuficiente
+      if (disponiblesUI < reward.cost) {
+        await pushLiveEvent({
+          type: "redeem_blocked",
+          status: "warn",
+          reason: "insufficient_balance",
+          redeem: {
+            rewardId: reward.id,
+            rewardName: reward.name,
+            cost: Number(reward.cost || 0),
+            available: Number(disponiblesUI || 0)
+          }
+        });
+
+        return alert(`Te faltan ${fmtMoney(reward.cost - disponiblesUI)} para usar tu saldo en ${reward.name}.`);
+      }
+
+      // ✅ compat: transaction(fn, onComplete, applyLocally)
+      const pointsRef = db.ref(`users/${user.uid}/points`);
+      const tx = await pointsRef.transaction((curr) => {
+        const prev = Number(curr || 0);
+        const base = Math.max(prev, disponiblesUI);
+
+        if (!Number.isFinite(base)) return;
+        if (base < reward.cost) return;
+
+        return +(base - reward.cost).toFixed(2);
+      }, undefined, false);
+
+      if (!tx.committed) {
+        alert('No fue posible reservar saldo. Intenta de nuevo.');
+        return;
+      }
+
+      const code = generarCodigo(10);
+      const expiresAt = Date.now() + 3*24*60*60*1000;
+
+      const payloadObj = { v:1, brand:"Applebee's", uid:user.uid, code, rewardId:reward.id, cost:reward.cost, exp:expiresAt };
+      const payload = JSON.stringify(payloadObj);
+
+      // ✅ Unificamos estatus a "pendiente"
+      const updates = {};
+      updates[`/redeems/${code}`] = {
+        code,
+        userId: user.uid,
+        rewardId: reward.id,
+        rewardName: reward.name,
+        cost: reward.cost,
+        status: 'pendiente',
+        createdAt: Date.now(),
+        expiresAt,
+        qrPayload: payload
+      };
+      updates[`/users/${user.uid}/redemptions/${code}`] = {
+        code,
+        rewardId: reward.id,
+        rewardName: reward.name,
+        cost: reward.cost,
+        status: 'pendiente',
+        createdAt: Date.now(),
+        expiresAt,
+        qrPayload: payload
+      };
+
+      await db.ref().update(updates);
+
+      // ✅ LIVE: Cupón creado (pendiente / reservado)
+      await pushLiveEvent({
+        type: "redeem_created",
+        status: "ok",
+        redeem: {
+          code,
+          rewardId: reward.id,
+          rewardName: reward.name,
+          cost: Number(reward.cost || 0),
+          expiresAt
+        },
+        ticket: {
+          total: Number(reward.cost || 0),
+          mesero: ""
+        }
+      });
+
+      $('qrBox').style.display = 'block';
+      $('rewardName').textContent = reward.name;
+      $('rewardCost').textContent = fmtMoney(reward.cost);
+      $('qrExpires').textContent = fmtDate(expiresAt);
+      $('couponCode').textContent = code;
+
+      const qrEl = $('qrcode');
+      qrEl.innerHTML = '';
+      const qrSize = Math.min(320, Math.floor(window.innerWidth * 0.86));
+      new QRCode(qrEl, { text: payload, width: qrSize, height: qrSize });
+
+      const fileName = `cupon_${reward.id}_${code}.png`;
+      setTimeout(()=> prepareMainQrDownloadUI(fileName), 80);
+
+      $('btnOpenQR').onclick = ()=> openQrFullscreenFromContainer(qrEl);
+      $('qrBox').scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+    } catch (e) {
+      console.error(e);
+      alert('No se pudo crear el canje. Intenta de nuevo.');
+    } finally {
+      if (activeBtn && activeBtn.tagName === "BUTTON") {
+        activeBtn.disabled = false;
+        activeBtn.style.opacity = "";
+      }
+    }
+  }
+
+  auth.onAuthStateChanged((user)=>{
+    if(!user){ location.href='index.html'; return; }
+    renderRewards();
+
+    db.ref(`users/${user.uid}/points`).on('value', (snap)=>{
+      _pointsNode = Number(snap.val()||0);
+      recalcAndRender();
+    });
+
+    db.ref(`users/${user.uid}/tickets`).on('value', (snap)=>{
+      const val = snap.val() || {};
+      _tickets = Object.values(val).map(t => ({
+        ...t,
+        total: Number(t.total || 0),
+        createdAt: Number(t.createdAt || 0),
+        vencePuntos: getTicketExpire(t)
+      }));
+      _tickets.sort((a,b) => (b.createdAt||0) - (a.createdAt||0));
+      recalcAndRender();
+    });
+
+    db.ref(`users/${user.uid}/redemptions`).on('value', (snap)=>{
+      const val = snap.val() || {};
+      _redemps = Object.keys(val).map(k => ({ code:k, ...val[k] }));
+      renderHistory();
+      recalcAndRender();
+    });
+
+    $('rewardsGrid').addEventListener('click', (ev)=>{
+      const btn = ev.target.closest('button[data-reward]'); if(!btn) return;
+      const rewardId = btn.getAttribute('data-reward');
+      const r = REWARDS.find(x=>x.id===rewardId);
+      canjearReward(r);
+    });
+  });
+  </script>
+</body>
+</html>

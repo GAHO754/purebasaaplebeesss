@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Panel</title>
+  <link rel="icon" type="image/png" sizes="32x32" href="manzanas.png">
+  <link rel="stylesheet" href="registrar.css" />
+  
+  <!-- Firebase (Compat) -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+  <script src="firebase-config.js"></script>
+
+  <style>
+    /* ======= HEADER COMPACTO + AVATAR ======= */
+    .top-bar{
+      position:sticky; top:0; z-index:40;
+      display:flex; align-items:center; justify-content:space-between;
+      padding:10px 12px; height:56px;
+      background: linear-gradient(180deg, #151314, #1c1616);
+      border-bottom: 1px solid rgba(255,255,255,.06);
+    }
+    .applebees-title{ font-size:20px; margin:0; letter-spacing:.2px }
+    .right-actions{ display:flex; align-items:center; gap:10px }
+    .btn-logout{
+      background:#e71e1e; color:#fff; border:0; border-radius:12px;
+      padding:8px 12px; font-weight:700; cursor:pointer;
+    }
+    .btn-secondary{
+      background:#2c2c2c; color:#ddd; padding:8px 12px; border-radius:12px; display:inline-block;
+      border:1px solid rgba(238, 6, 6, 0.08);
+    }
+    .avatar{
+      width:36px; height:36px; border-radius:50%; display:grid; place-items:center;
+      font-weight:900; letter-spacing:.5px; cursor:pointer; user-select:none;
+      background:#0b0b0b; color:#ff2a2a; border:1px solid rgb(255, 255, 255);
+      box-shadow: 0 0 0 3px rgba(0,0,0,.35) inset;
+    }
+    .avatar img{ width:100%; height:100%; object-fit:cover; border-radius:50%; display:block }
+
+    /* ======= LAYOUT ======= */
+    .dashboard{ max-width:980px; margin:64px auto 48px; padding:12px }
+    .stats{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin-bottom:14px }
+    @media (min-width:880px){ .stats{ grid-template-columns:repeat(4,minmax(0,1fr)); } }
+    .stat{ background:rgba(25,25,25,.7); border:1px solid rgba(255,255,255,.08);
+           border-radius:12px; padding:12px }
+    .stat h4{ margin:0 0 4px; color:#ffd4d4; font-size:14px }
+    .stat strong{ font-size:20px }
+
+    /* Tabla con scroll horizontal en móvil */
+    .table-wrap{ overflow:auto; border-radius:12px; border:1px solid rgba(255,255,255,.08) }
+    table{ min-width:720px; width:100%; border-collapse:collapse; background:rgba(25,25,25,.6) }
+    th,td{ padding:10px 8px; border-bottom:1px solid rgba(255,255,255,.08); text-wrap:nowrap }
+    th{ text-align:left; color:#ffd4d4; font-size:13px }
+    .chip-exp{ padding:4px 8px; border-radius:999px; font-weight:700 }
+    .ok{ color:#9be49b } .warn{ color:#ffdfaa } .err{ color:#ff9a9a }
+
+    .redeem-wrap{
+      display:flex;
+      justify-content:center;
+      margin:14px 0 18px;
+    }
+
+    .btn-redeem{
+      background:#e71e1e;
+      color:#ffffff;
+      padding:10px 16px;
+      border-radius:12px;
+      display:inline-block;
+      text-decoration: none;
+    }
+
+    .video-card{ margin-top:18px; background:rgba(25,25,25,.7);
+      border:1px solid rgba(255,255,255,.08); border-radius:14px; padding:12px }
+    .video-card h3{ margin:0 0 8px; color:#ffd4d4 }
+    .video-wrap{ width:100%; aspect-ratio:16/9; background:#000; border-radius:10px; overflow:hidden }
+    .video-wrap video{ width:100%; height:100%; object-fit:cover }
+
+    @media (max-width:430px){
+      .applebees-title{ font-size:18px }
+      .right-actions .btn-secondary{ display:none }
+    }
+
+    /* ======= SUB-BARRA MÓVIL ======= */
+    .subbar{
+      display:none;
+      position:sticky;
+      top:56px;
+      z-index:39;
+      padding:8px 12px;
+      background:linear-gradient(180deg,#1a1616,#1b1313);
+      border-bottom:1px solid rgba(255,255,255,.06);
+    }
+    .btn-sub-registrar{
+      padding:8px 12px;
+      border-radius:12px;
+    }
+    @media (max-width:430px){
+      .subbar{ display:flex; align-items:center; gap:8px }
+      .dashboard{ margin-top:96px }
+    }
+
+    /* ======= MODAL PERFIL ======= */
+    .modal-overlay{ position:fixed; inset:0; background:rgba(0,0,0,.6); display:none; place-items:center; z-index:50 }
+    .modal{ width:min(520px,92vw); background:#1a1a1a; border:1px solid rgba(255,255,255,.1); border-radius:16px; padding:16px }
+    .modal-header{ display:flex; justify-content:space-between; align-items:center; margin-bottom:10px }
+    .modal-title{ margin:0; font-size:18px }
+    .modal-close{ background:transparent; border:0; color:#fff; font-size:20px; cursor:pointer }
+    .form-row{ display:grid; gap:8px; margin-bottom:10px }
+    .input, .file{ width:100%; height:40px; padding:8px 10px; border-radius:10px; background:#101010;
+                   color:#fff; border:1px solid rgba(255,255,255,.1) }
+    .btn{ height:40px; border-radius:10px; border:0; cursor:pointer; font-weight:700 }
+    .btn-dark{ background:#0e0e0e; color:#fff; border:1px solid rgba(255,255,255,.1) }
+    .btn-primary{ background:#e71e1e; color:#fff }
+    .preview{ width:82px; height:82px; border-radius:50%; overflow:hidden; border:1px solid rgba(255,255,255,.1); background:#0e0e0e }
+    .preview img{ width:100%; height:100%; object-fit:cover }
+    .modal-actions{ display:flex; gap:8px; justify-content:flex-end; margin-top:6px }
+
+/* Modifica esta clase para que no fuerce el 16/9 si la imagen no lo es */
+.video-wrap.banner-349 {
+  width: 100%;
+  aspect-ratio: auto; /* Cambiamos de 16/9 a auto */
+  background: transparent; /* Quitamos el fondo negro */
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.promo-slider {
+  position: relative;
+  width: 100%;
+  max-height: 400px; /* O el alto máximo que desees */
+  overflow: hidden;
+  border-radius: 16px;
+  background: #1a1a1a; /* Un color oscuro neutro por si carga */
+}
+
+.promo-slider img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: contain; /* Esto hará que se vea toda la imagen sin recortarse */
+  transition: opacity .6s ease;
+}
+
+/* Opcional: Si quieres que la imagen cubra todo el fondo (puede recortar bordes) 
+   usa 'object-fit: cover;' en lugar de 'contain' */
+   
+/* Dots */
+.promo-dots{
+  position:absolute;
+  left: 50%;
+  bottom: 10px;
+  transform: translateX(-50%);
+  display:flex;
+  gap:8px;
+  padding:6px 10px;
+  border-radius: 999px;
+  background: rgba(0,0,0,.28);
+  backdrop-filter: blur(6px);
+}
+
+.promo-dots button{
+  width:10px; height:10px;
+  border-radius:999px;
+  border:0;
+  background: rgba(255,255,255,.45);
+  cursor:pointer;
+  padding:0;
+}
+
+.promo-dots button.active{
+  background: rgba(255,255,255,.95);
+}
+
+@media (max-width: 520px){
+  .promo-dots{ display:none; }
+}
+  </style>
+</head>
+
+<body class="bg-animated">
+  <!-- ======= HEADER SIN SALUDO ======= -->
+  <header class="top-bar">
+    <div class="left-section"><h1 class="applebees-title">Applebee’s</h1></div>
+
+    <div class="right-actions">
+      <a class="btn-secondary" href="registrar.html">+ Registrar ticket</a>
+
+      <!-- Avatar con iniciales o foto -->
+      <button id="avatarBtn" class="avatar" title="Editar perfil">
+        <span id="avatarInitials">--</span>
+      </button>
+
+      <button id="btnLogout" class="btn-logout" type="button">Cerrar Sesion</button>
+    </div>
+  </header>
+
+  <!-- ======= SUB-BARRA SOLO EN MÓVIL ======= -->
+  <div class="subbar">
+    <a class="btn-secondary btn-sub-registrar" href="registrar.html">+ Registrar ticket</a>
+  </div>
+
+  <!-- ======= CONTENIDO ======= -->
+  <main class="dashboard">
+    <section class="stats">
+      <div class="stat"><h4>🎟️ Tickets cargados</h4><div><strong id="statTickets">0</strong></div></div>
+      <div class="stat"><h4>📍 Visitas realizadas</h4><div><strong id="statVisitas">0</strong></div></div>
+
+      <div class="stat">
+        <h4>💳 Saldo disponible</h4>
+        <div><strong id="statPuntosActivos">0</strong></div>
+        <small class="warn" id="statPuntosProx"></small>
+        <small class="warn" id="statPuntosDetalle"></small>
+      </div>
+
+      <div class="stat"><h4>⏳ Saldo vencido</h4><div><strong id="statPuntosVencidos">0</strong></div></div>
+    </section>
+
+    <h3 style="margin:8px 0;">Historial de consumos</h3>
+    <div class="table-wrap">
+      <table id="tablaTickets">
+        <thead>
+          <tr>
+            <th># Ticket</th><th>Fecha</th><th>Total</th><th>Saldo</th><th>Vence saldo</th><th>Estatus</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <div class="redeem-wrap"><a class="btn-redeem" href="canjear.html">Canjear saldo</a></div>
+
+    <section class="video-card hero">
+  <h3>Promociones para ti</h3>
+
+  <div class="video-wrap banner-349">
+    <div class="promo-slider" id="promoSlider" aria-label="Promociones">
+      <img id="promoImg" src="promo1.png" alt="" loading="eager" />
+      
+      <div class="promo-dots" id="promoDots" aria-hidden="true"></div>
+    </div>
+  </div>
+</section>
+
+  <!-- ======= MODAL EDITAR PERFIL ======= -->
+  <div id="perfilModal" class="modal-overlay" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="perfilTitle">
+      <div class="modal-header">
+        <h3 id="perfilTitle" class="modal-title">Editar Perfil</h3>
+        <button class="modal-close" id="perfilClose" aria-label="Cerrar">×</button>
+      </div>
+
+      <div style="display:flex; gap:12px; align-items:center; margin-bottom:10px">
+        <div class="preview"><img id="perfilPreview" alt="Foto de perfil" /></div>
+        <div style="font-size:12px; color:#cfcfcf">
+          Si no subes imagen se mostrarán tus iniciales.
+        </div>
+      </div>
+
+      <div class="form-row">
+        <input id="perfilName" class="input" type="text" placeholder="Nombre visible (ej. Alejandro Ayala)" />
+        <input id="perfilFile" class="file" type="file" accept="image/*" capture="user" />
+      </div>
+
+      <div class="modal-actions">
+        <button id="perfilSave" class="btn btn-primary">Guardar cambios</button>
+        <button id="perfilCancel" class="btn btn-dark">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+ <script>
+  // ====== Firebase ======
+  const auth = firebase.auth();
+  const db   = firebase.database();
+
+  // ====== Helpers ======
+  const $ = (sel)=> document.querySelector(sel);
+  const tbody = document.querySelector('#tablaTickets tbody');
+
+  function fmtDate(millis){
+    if(!millis) return '';
+    const d = new Date(millis);
+    return d.toLocaleDateString('es-MX', {year:'numeric', month:'2-digit', day:'2-digit'});
+  }
+
+  // Mostrar el saldo como dinero
+  function fmtMoney(n){
+    const v = Number(n||0);
+    return `$${v.toFixed(2)}`;
+  }
+
+  function daysLeft(millis){
+    if(!millis) return -1;
+    return Math.ceil((millis - Date.now())/86400000);
+  }
+
+  function initialsFromName(name=''){
+    const parts = String(name).trim().split(/\s+/).filter(Boolean);
+    if(parts.length === 0) return '--';
+    if(parts.length === 1) return parts[0].slice(0,2).toUpperCase();
+    return (parts[0][0] + parts[parts.length-1][0]).toUpperCase();
+  }
+
+  // ====== Logout ======
+  $('#btnLogout').addEventListener('click', async ()=>{
+    try{ await auth.signOut(); location.href='index.html'; }
+    catch(e){ alert('No se pudo cerrar sesión'); console.error(e); }
+  });
+
+  // ====== Estado ======
+  let _tickets=[], _redemptions=[];
+  let currentUser=null;
+
+  function renderTableAndTicketStats(){
+    let totalTickets=0, visitas=0, saldoActivosTickets=0, saldoVencido=0, proximos=[];
+
+    const rows = _tickets.map(t=>{
+      totalTickets++; visitas++;
+
+      const saldo = Number(t.puntos||0);
+      const left = t.vencePuntos ? daysLeft(t.vencePuntos) : -1;
+
+      let estatus;
+      if(!t.vencePuntos || left < 0){
+        saldoVencido += saldo; estatus = '<span class="chip-exp err">Vencido</span>';
+      }else{
+        saldoActivosTickets += saldo; estatus = '<span class="chip-exp ok">Activo</span>';
+        if(left<=14 && saldo>0) proximos.push({saldo,left});
+      }
+
+      return `<tr>
+        <td>${t.numero || t.folio || ''}</td>
+        <td>${t.fecha ? t.fecha.split('-').reverse().join('/') : fmtDate(t.createdAt)}</td>
+        <td>${fmtMoney(t.total||0)}</td>
+        <td>${fmtMoney(saldo)}</td>
+        <td>${fmtDate(t.vencePuntos)}</td>
+        <td>${estatus}</td>
+      </tr>`;
+    }).join('');
+
+    tbody.innerHTML = rows || `<tr><td colspan="6" class="warn">Sin tickets aún.</td></tr>`;
+    document.getElementById('statTickets').textContent = totalTickets;
+    document.getElementById('statVisitas').textContent = visitas;
+    document.getElementById('statPuntosVencidos').textContent = fmtMoney(saldoVencido);
+
+    window.__saldoActivosTickets = saldoActivosTickets;
+    window.__proximos = proximos;
+    updateHeaderStats();
+  }
+
+  function updateHeaderStats(){
+    const saldoActivosTickets = window.__saldoActivosTickets || 0;
+    const proximos = window.__proximos || [];
+    const now = Date.now();
+
+    const spentByRedeemed = _redemptions.filter(r=>r.status==='canjeado')
+      .reduce((a,r)=> a + (Number(r.cost)||0), 0);
+
+    const reservedPending = _redemptions.filter(r=>r.status==='pendiente')
+      .filter(r=> !r.expiresAt || r.expiresAt > now)
+      .reduce((a,r)=> a + (Number(r.cost)||0), 0);
+
+    const disponibles = Math.max(0, saldoActivosTickets - spentByRedeemed - reservedPending);
+
+    document.getElementById('statPuntosActivos').textContent = fmtMoney(disponibles);
+
+    document.getElementById('statPuntosProx').textContent = proximos.length
+      ? `⚠️ ${fmtMoney(proximos.reduce((a,b)=>a+b.saldo,0))} vence en ~${Math.min(...proximos.map(p=>p.left))} día(s).`
+      : '';
+
+    document.getElementById('statPuntosDetalle').textContent =
+      (reservedPending>0 || spentByRedeemed>0)
+        ? `Reservado: ${fmtMoney(reservedPending)} · Usado: ${fmtMoney(spentByRedeemed)}`
+        : '';
+  }
+
+  function showError(msg){
+    console.error(msg);
+    tbody.innerHTML = `<tr><td colspan="6" class="err">${msg}</td></tr>`;
+  }
+
+  // ====== Perfil (avatar + modal) ======
+  const perfilModal = document.getElementById('perfilModal');
+  const perfilName  = document.getElementById('perfilName');
+  const perfilFile  = document.getElementById('perfilFile');
+  const perfilPrev  = document.getElementById('perfilPreview');
+  const avatarBtn   = document.getElementById('avatarBtn');
+
+  function openPerfil(){
+    perfilModal.style.display = 'grid';
+    perfilModal.setAttribute('aria-hidden','false');
+    perfilName.focus();
+  }
+  function closePerfil(){
+    perfilModal.style.display = 'none';
+    perfilModal.setAttribute('aria-hidden','true');
+    perfilFile.value='';
+  }
+  document.getElementById('perfilClose').addEventListener('click', closePerfil);
+  document.getElementById('perfilCancel').addEventListener('click', closePerfil);
+  avatarBtn.addEventListener('click', openPerfil);
+  perfilModal.addEventListener('click', (e)=>{ if(e.target === perfilModal) closePerfil(); });
+
+  perfilFile.addEventListener('change', ()=>{
+    const f = perfilFile.files?.[0];
+    if(!f) return;
+    const r = new FileReader();
+    r.onload = (ev)=>{ perfilPrev.src = ev.target.result; };
+    r.readAsDataURL(f);
+  });
+
+  document.getElementById('perfilSave').addEventListener('click', async ()=>{
+    const displayName = perfilName.value.trim();
+    let photoURL = perfilPrev?.src || '';
+
+    try{
+      if(!currentUser) throw new Error('No hay usuario');
+      await currentUser.updateProfile({ displayName, photoURL: photoURL || currentUser.photoURL || '' });
+      const profile = { displayName, photoURL: photoURL || null, updatedAt: Date.now() };
+      await db.ref(`users/${currentUser.uid}/profile`).update(profile);
+      setAvatar(currentUser, displayName);
+      closePerfil();
+    }catch(err){
+      console.error(err);
+      alert('No se pudieron guardar los cambios de perfil.');
+    }
+  });
+
+  function setAvatar(user, nameFallback){
+    const name = user.displayName || nameFallback || user.email || 'Usuario';
+    const userRef = db.ref(`users/${user.uid}/profile`);
+    userRef.once('value').then(s=>{
+      const p = s.val() || {};
+      const foto = p.photoURL || user.photoURL || '';
+      if(foto){
+        document.getElementById('avatarBtn').innerHTML = `<img alt="avatar" src="${foto}">`;
+        if(perfilPrev) perfilPrev.src = foto;
+      }else{
+        document.getElementById('avatarBtn').innerHTML = `<span>${initialsFromName(name)}</span>`;
+        if(perfilPrev) perfilPrev.removeAttribute('src');
+      }
+      perfilName.value = name;
+    });
+  }
+
+  // ====== Cargar tickets/redenciones y usuario ======
+  auth.onAuthStateChanged((user)=>{
+    currentUser = user;
+    if(!user){
+      showError("No hay sesión activa.");
+      return;
+    }
+
+    setAvatar(user);
+
+    const tRef = db.ref(`users/${user.uid}/tickets`);
+    tRef.on('value', (snap)=>{
+      const val = snap.val() || {};
+      _tickets = Object.values(val).map(t=>{
+        const puntosNorm = (
+          (t.puntos && typeof t.puntos === 'object' ? Number(t.puntos.total||0) : Number(t.puntos||0)) ||
+          Number(t.puntosTotal||0) || Number(t.points||0)
+        );
+        const createdAt = Number(t.createdAt||0);
+        const vencePuntos = t.vencePuntos ? Number(t.vencePuntos)
+              : (createdAt ? createdAt + 180*86400000 : null);
+
+        return { ...t, total:Number(t.total||0), puntos:puntosNorm, createdAt, vencePuntos };
+      });
+      _tickets.sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
+      renderTableAndTicketStats();
+    }, (err)=> showError("Error leyendo tickets: " + err.message));
+
+    const rRef = db.ref(`users/${user.uid}/redemptions`);
+    rRef.on('value', (snap)=>{
+      const val = snap.val() || {};
+      _redemptions = Object.values(val).map(r=>({
+        ...r, cost:Number(r.cost||0), createdAt:Number(r.createdAt||0),
+        expiresAt: r.expiresAt ? Number(r.expiresAt) : null,
+        status: String(r.status||'').toLowerCase()
+      }));
+      updateHeaderStats();
+    }, (err)=> console.error("Error leyendo redemptions:", err));
+  });
+
+  // ====== Carrusel de Promos (5s, loop) ======
+  (() => {
+    const images = [
+      "promo1.png",
+      "promo2.png",
+      "promo3.png",
+      "promo4.png",
+      "promo5.png",
+      "promo6.png",
+      // "promo7.jpg",
+    ];
+
+    const INTERVAL_MS = 5000;
+
+    const imgEl  = document.getElementById("promoImg");
+    const dotsEl = document.getElementById("promoDots");
+    const slider = document.getElementById("promoSlider");
+
+    if (!imgEl || !dotsEl || !slider) {
+      console.warn("[promo-slider] No se encontraron elementos del carrusel.");
+      return;
+    }
+
+    let idx = 0;
+    let timer = null;
+
+    // Preload
+    images.forEach(src => { const im = new Image(); im.src = src; });
+
+    function renderDots(){
+      dotsEl.innerHTML = "";
+      images.forEach((_, i) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.setAttribute("aria-label", `Ver promoción ${i+1}`);
+        b.addEventListener("click", () => goTo(i, true));
+        dotsEl.appendChild(b);
+      });
+    }
+
+    function setActiveDot(){
+      [...dotsEl.children].forEach((b, i) => b.classList.toggle("active", i === idx));
+    }
+
+    function goTo(newIdx, resetTimer=false){
+      idx = (newIdx + images.length) % images.length;
+
+      imgEl.style.opacity = "0";
+      setTimeout(() => {
+        imgEl.src = images[idx];
+        imgEl.style.opacity = "1";
+        setActiveDot();
+      }, 220);
+
+      if (resetTimer){
+        stop();
+        start();
+      }
+    }
+
+    function start(){
+      stop();
+      timer = setInterval(() => goTo(idx + 1), INTERVAL_MS);
+    }
+
+    function stop(){
+      if (timer) clearInterval(timer);
+      timer = null;
+    }
+
+    slider.addEventListener("mouseenter", stop);
+    slider.addEventListener("mouseleave", start);
+
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) stop();
+      else start();
+    });
+
+    // init
+    renderDots();
+    imgEl.src = images[0];
+    setActiveDot();
+    start();
+  })();
+</script>
+
+</body>
+</html>

@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Registrar ticket</title>
+  <link rel="icon" type="image/png" sizes="32x32" href="manzanas.png">
+  <link rel="stylesheet" href="registrar.css?v=20260126_fix1" />
+
+  <style>
+    /* ===== MODAL CÁMARA ===== */
+    .camera-modal{
+      display:none;
+      position:fixed;
+      inset:0;
+      z-index:9999;
+      background:rgba(0,0,0,.85);
+      backdrop-filter:blur(2px);
+      align-items:center;
+      justify-content:center;
+      padding:16px;
+    }
+    .camera-box{
+      width:min(680px,96vw);
+      max-height:90vh;
+      background:#0b0b0b;
+      border:1px solid rgba(255,255,255,.12);
+      border-radius:14px;
+      padding:12px;
+      display:flex;
+      flex-direction:column;
+    }
+    .camera-header{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      margin-bottom:8px;
+    }
+    .camera-body{
+      flex:1 1 auto;
+      overflow:auto;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+    }
+    #cameraVideo{
+      width:100%;
+      max-height:50vh;
+      height:auto;
+      border-radius:12px;
+      background:#000;
+      object-fit:contain;
+    }
+    .camera-actions{
+      margin-top:12px;
+      display:flex;
+      justify-content:center;
+    }
+    .btn-capture{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      gap:8px;
+      padding:12px 40px;
+      border-radius:999px;
+      border:0;
+      cursor:pointer;
+      background:#f03535;
+      color:#fff;
+      font-weight:700;
+      box-shadow:0 10px 28px rgba(0,0,0,.35);
+    }
+
+    /* Top bar */
+    .top-bar{
+      height:56px;padding:10px 12px;
+      display:flex;align-items:center;justify-content:space-between
+    }
+    .applebees-title{font-size:20px;margin:0}
+
+    /* Página */
+    .page{max-width:980px;margin:110px auto 60px;padding:16px}
+    .grid-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}
+    .card{background:rgba(25,25,25,.7);border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:16px}
+    .muted{opacity:.85}
+    .big{font-size:28px;font-weight:800;letter-spacing:.2px}
+    .ok{color:#9be49b} .warn{color:#ffdfaa} .err{color:#ff9a9a}
+
+    /* Botones genéricos */
+    .btn-cta, .btn-primary, .btn-secondary{
+      display:inline-flex;align-items:center;justify-content:center;gap:8px;
+      padding:12px 18px;border-radius:12px;text-decoration:none;font-weight:700;
+      border:0;cursor:pointer;user-select:none
+    }
+    .btn-cta{background:#f03535;color:#fff}
+    .btn-cta:active{transform:scale(.98)}
+    .btn-primary{background:#1f6feb;color:#fff}
+    .btn-secondary{background:transparent;border:1px solid rgba(255,255,255,.25);color:#fff}
+
+    /* Tabla */
+    table{
+      width:100%;border-collapse:collapse;font-size:14px;background:rgba(25,25,25,.6);
+      border:1px solid rgba(255,255,255,.08);border-radius:12px;overflow:hidden
+    }
+    th,td{padding:10px 8px;border-bottom:1px solid rgba(255,255,255,.08)}
+    th{text-align:left;color:#ffd4d4}
+
+    /* Upload / dropzone */
+    .upload-area{display:grid;gap:10px}
+    .dropzone{
+      border:1px dashed rgba(255,255,255,.35);
+      border-radius:14px;
+      padding:14px;
+      text-align:center;
+      background:rgba(25,25,25,.45);
+    }
+    .dropzone.drag{background:rgba(25,25,25,.65)}
+    .dropzone img.preview{
+      max-width:100%;
+      max-height:220px;
+      height:auto;
+      border-radius:10px;
+      display:block;
+      margin:8px auto 0;
+      object-fit:contain;
+    }
+
+    .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    @media (max-width:540px){ .grid-2{grid-template-columns:1fr} }
+
+    .validacion-msg{margin-top:8px}
+    .validacion-msg.ok{color:#9be49b}
+    .validacion-msg.err{color:#ff9a9a}
+
+    .toast{
+      position:fixed;left:50%;top:24px;transform:translateX(-50%);
+      background:rgba(20,20,20,.96);color:#fff;border:1px solid rgba(255,255,255,.15);
+      border-radius:12px;padding:14px 16px;z-index:9999;box-shadow:0 10px 35px rgba(0,0,0,.4);
+      max-width:90vw;display:none
+    }
+    .toast.show{display:block;animation:pop .18s ease-out}
+    @keyframes pop{
+      from{transform:translateX(-50%) scale(.98);opacity:.0}
+      to{transform:translateX(-50%) scale(1);opacity:1}
+    }
+
+    #iaBadge{
+      display:inline-block;margin-top:8px;padding:4px 8px;border-radius:999px;
+      font-size:11px;background:#444;color:#fff;opacity:.9;
+    }
+    #ocrDebug{
+      margin-top:12px;font-size:11px;white-space:pre-wrap;
+      max-height:180px;overflow:auto;opacity:.7;
+    }
+
+    /* ✅ ANTI-TAP (móvil) para campos sellados/bloqueados */
+    input[data-lock="1"]{
+      pointer-events:none !important;
+      caret-color:transparent !important;
+      opacity:1 !important;
+      -webkit-text-fill-color:inherit;
+    }
+
+    /* =========================================================
+       ✅ AYUDA CON IMAGEN ( ? ) JUNTO AL TÍTULO
+       ========================================================= */
+    .title-help{
+      display:flex;
+      align-items:center;
+      gap:10px;
+      position:relative;
+      margin:0 0 10px;
+    }
+    .help-icon{
+      width:28px;height:28px;
+      border-radius:999px;
+      border:1px solid rgba(255,255,255,.25);
+      background:rgba(255,255,255,.08);
+      color:#fff;
+      font-weight:900;
+      cursor:pointer;
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      line-height:1;
+    }
+    .help-icon:hover{ background:rgba(255,255,255,.14); }
+    .help-icon:active{ transform:scale(.98); }
+
+    .help-pop{
+      position:absolute;
+      top:44px;
+      left:0;
+      z-index:9999;
+      width:min(420px, 92vw);
+      display:none;
+    }
+    .help-pop.show{ display:block; }
+
+    .help-pop-inner{
+      background:rgba(15,15,15,.98);
+      border:1px solid rgba(255,255,255,.16);
+      border-radius:14px;
+      box-shadow:0 18px 45px rgba(0,0,0,.55);
+      overflow:hidden;
+    }
+    .help-pop-header{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      padding:10px 12px;
+      border-bottom:1px solid rgba(255,255,255,.10);
+    }
+    .help-close{
+      background:transparent;
+      border:0;
+      color:#fff;
+      cursor:pointer;
+      font-size:16px;
+      opacity:.85;
+    }
+    .help-close:hover{opacity:1}
+
+    .help-img{
+      display:block;
+      width:100%;
+      height:auto;
+      max-height:320px;
+      object-fit:contain;
+      background:#000;
+      cursor:zoom-in;
+    }
+    .help-text{
+      padding:10px 12px;
+      font-size:13px;
+      opacity:.9;
+      display:grid;
+      gap:4px;
+    }
+    @media (max-width:540px){
+      .help-pop{ left:50%; transform:translateX(-50%); top:46px; }
+    }
+
+    /* ✅ Input manual (Mesero) - estilo consistente */
+    .input-manual{
+      width:100%;
+      padding:12px 12px;
+      border-radius:12px;
+      border:1px solid rgba(255,255,255,.18);
+      background:rgba(10,10,10,.35);
+      color:#fff;
+      outline:none;
+      font-weight:600;
+      letter-spacing:.2px;
+    }
+    .input-manual:focus{
+      border-color:rgba(255,255,255,.35);
+      box-shadow:0 0 0 3px rgba(255,255,255,.08);
+    }
+    .hint{
+      font-size:12px;
+      opacity:.8;
+      margin-top:4px;
+    }
+  </style>
+</head>
+
+<body class="bg-animated">
+  <header class="top-bar">
+    <div class="left-section">
+      <h1 class="applebees-title">Applebee’s</h1>
+    </div>
+    <div class="right-section">
+      <button id="btnLogout" class="btn-secondary" type="button">Regresar</button>
+    </div>
+  </header>
+
+  <main class="page">
+    <p id="userGreeting" class="muted" style="margin-bottom:12px;"></p>
+
+    <!-- RESUMEN SALDO -->
+    <section class="grid-cards" style="margin-bottom:18px">
+      <article class="card">
+        <div class="muted">Saldo disponible</div>
+        <div class="big" id="ptsDisponibles">$0.00</div>
+      </article>
+      <article class="card">
+        <div class="muted">Saldo reservado</div>
+        <div class="big" id="ptsReservados">$0.00</div>
+      </article>
+      <article class="card">
+        <div class="muted">Saldo acumulado</div>
+        <div class="big" id="ptsTotales">$0.00</div>
+      </article>
+    </section>
+
+    <!-- REGISTRO -->
+    <section class="card panel-option" id="subida-ticket">
+
+      <h2 class="title-help">
+        📸 Captura tu ticket
+        <button class="help-icon" id="ticketHelpBtn" type="button" aria-label="¿Cómo tomar la foto?">?</button>
+
+        <div class="help-pop" id="ticketHelpPop" role="dialog" aria-hidden="true">
+          <div class="help-pop-inner">
+            <div class="help-pop-header">
+              <strong>Ejemplo de cómo tomar la foto del ticket</strong>
+              <button class="help-close" id="ticketHelpClose" type="button" aria-label="Cerrar">✕</button>
+            </div>
+
+            <img
+              id="ticketHelpImg"
+              src="imagenticket.png?v=1"
+              alt="Guía de cómo tomar la foto del ticket"
+              class="help-img"
+            />
+
+            <div class="help-text">
+              <div>• Que se vea completo (folio, fecha y total).</div>
+              <div>• Sin sombras y sin reflejos.</div>
+              <div>• Enfocado y sin cortar bordes.</div>
+            </div>
+          </div>
+        </div>
+      </h2>
+
+      <!-- Subida/Cámara -->
+      <div class="upload-area">
+        <label for="ticketFile">📎 Foto del ticket</label>
+
+        <div class="dropzone" id="dropzone" aria-label="Arrastra tu ticket aquí">
+          <p>Arrastra y suelta la imagen aquí</p>
+        </div>
+
+        <input type="file" id="ticketFile" accept="image/*" style="display:none;" />
+
+        <div class="upload-actions" style="display:flex;gap:8px;flex-wrap:wrap">
+          <button id="btnSeleccionarArchivo" type="button" class="btn-secondary">📎 Subir archivo</button>
+          <button id="btnAbrirCamara" type="button" class="btn-primary">📷 Tomar foto</button>
+        </div>
+
+        <p id="ocrStatus" class="validacion-msg"></p>
+        <span id="iaBadge">Esperando Ticket…</span>
+        <pre id="ocrDebug" style="display:none;"></pre>
+      </div>
+
+      <!-- MODAL CÁMARA -->
+      <div class="camera-modal" id="cameraModal" aria-hidden="true">
+        <div class="camera-box">
+          <div class="camera-header">
+            <h3>Tomar foto del ticket</h3>
+            <button id="btnCerrarCamara" class="btn-secondary" type="button">Cerrar</button>
+          </div>
+
+          <div class="camera-body">
+            <video id="cameraVideo" playsinline autoplay muted></video>
+          </div>
+
+          <div class="camera-actions">
+            <button id="btnCapturar" type="button" class="btn-capture">📸 Capturar</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Form (VISUAL sin teclado) + valores reales ocultos -->
+      <div class="upload-area">
+        <div class="grid-2">
+          <div>
+            <label>Número de ticket</label>
+            <div class="locked-field" id="viewTicketNumero">—</div>
+            <input type="hidden" id="inputTicketNumero" />
+          </div>
+
+          <div>
+            <label>Fecha de consumo</label>
+            <div class="locked-field" id="viewTicketFecha">—</div>
+            <input type="hidden" id="inputTicketFecha" />
+          </div>
+        </div>
+
+        <!-- ✅ MESERO MANUAL -->
+        <label>Mesero (escríbelo como aparece en tu ticket)</label>
+        <input
+          type="text"
+          id="inputTicketMesero"
+          class="input-manual"
+          placeholder=""
+          autocomplete="off"
+          maxlength="40"
+        />
+        <div class="hint">Obligatorio para mejor control interno.</div>
+
+      <div style="display:none;">
+  <input type="hidden" id="inputTicketTotal" />
+</div>
+
+
+        <button id="btnRegistrarTicket" type="button" class="btn-cta" disabled>Registrar Ticket</button>
+      </div>
+
+      <div class="ticket-result">
+        <p id="ticketValidacion" class="validacion-msg"></p>
+      </div>
+    </section>
+
+    <!-- ÚLTIMOS TICKETS -->
+    <section class="card" style="margin-top:18px">
+      <h3>Mis últimos tickets</h3>
+
+      <div class="table-scroll">
+        <table class="tickets-table">
+          <thead>
+            <tr>
+              <th>Fecha</th>
+              <th>Folio</th>
+              <th>Total</th>
+              <th>Saldo</th>
+              <th>Vence</th>
+            </tr>
+          </thead>
+          <tbody id="tbodyTickets">
+            <tr><td colspan="5" class="muted">Sin tickets.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+  </main>
+
+  <div class="toast" id="awardToast"></div>
+
+  <footer><p style="text-align:center;opacity:.7">© 2025 Great American Hospitality</p></footer>
+
+<!-- Firebase -->
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-storage.js"></script>
+
+<script src="firebase-config.js"></script>
+
+<!-- Tesseract (OCR) -->
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@4/dist/tesseract.min.js"></script>
+
+<!-- Tu lógica -->
+<script src="ocr.js"></script>
+<script src="registrar.js"></script>
+
+
+  <!-- ✅ Script ayuda (?) -->
+  <script>
+  (() => {
+    const btn   = document.getElementById("ticketHelpBtn");
+    const pop   = document.getElementById("ticketHelpPop");
+    const close = document.getElementById("ticketHelpClose");
+    const img   = document.getElementById("ticketHelpImg");
+
+    if(!btn || !pop) return;
+
+    function openPop(){
+      pop.classList.add("show");
+      pop.setAttribute("aria-hidden", "false");
+    }
+    function closePop(){
+      pop.classList.remove("show");
+      pop.setAttribute("aria-hidden", "true");
+    }
+    function togglePop(){
+      pop.classList.contains("show") ? closePop() : openPop();
+    }
+
+    btn.addEventListener("mouseenter", openPop);
+    btn.addEventListener("mouseleave", () => setTimeout(() => {
+      if (!pop.matches(":hover") && !btn.matches(":hover")) closePop();
+    }, 120));
+
+    pop.addEventListener("mouseenter", openPop);
+    pop.addEventListener("mouseleave", closePop);
+
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      togglePop();
+    });
+
+    if(close) close.addEventListener("click", closePop);
+
+    document.addEventListener("click", (e) => {
+      if(!pop.classList.contains("show")) return;
+      if(pop.contains(e.target) || btn.contains(e.target)) return;
+      closePop();
+    });
+
+    document.addEventListener("keydown", (e) => {
+      if(e.key === "Escape") closePop();
+    });
+
+    window.addEventListener("scroll", () => {
+      if(pop.classList.contains("show")) closePop();
+    }, { passive:true });
+
+    if(img){
+      img.addEventListener("click", () => {
+        window.open(img.src, "_blank");
+      });
+    }
+  })();
+  </script>
+</body>
+</html>

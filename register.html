@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Crear Cuenta - Applebee's</title>
+  <link rel="icon" type="image/png" sizes="32x32" href="manzanas.png">
+  <link rel="stylesheet" href="style.css" />
+</head>
+
+<body>
+
+  <!-- ❄️ CANVAS PARA EFECTO NIEVE -->
+  <canvas id="snowCanvas"></canvas>
+
+  <div class="container">
+    <div class="form-card">
+      <h1>Crear Cuenta</h1>
+
+      <!-- Nombre -->
+      <div class="field-group">
+        <input type="text" id="regName" placeholder="Nombre completo" autocomplete="name" />
+        <span class="tooltip">❓
+          <span class="tooltiptext">Escribe tu nombre y apellidos tal como aparecerán en tu cuenta.</span>
+        </span>
+      </div>
+
+      <!-- Correo -->
+      <div class="field-group">
+        <input type="email" id="regEmail" placeholder="Correo electrónico" autocomplete="email" />
+        <span class="tooltip">❓
+          <span class="tooltiptext">Usa un correo válido, lo usaremos para recuperar tu cuenta.</span>
+        </span>
+      </div>
+
+      <!-- Teléfono -->
+      <div class="field-group">
+        <input type="tel" id="regPhone" placeholder="Teléfono (10 dígitos)" inputmode="numeric" />
+        <span class="tooltip">❓
+          <span class="tooltiptext">Opcional. Si lo pones, podremos avisarte de promociones.</span>
+        </span>
+      </div>
+
+      <!-- Contraseña -->
+      <div class="field-group">
+        <input type="password" id="regPassword" placeholder="Contraseña" autocomplete="new-password" />
+        <span class="tooltip">❓
+          <span class="tooltiptext">Mínimo 8 caracteres. Mezcla mayúsculas, números y símbolos.</span>
+        </span>
+      </div>
+
+      <button id="btnRegister">Crear Cuenta</button>
+
+      <p class="link">
+        ¿Ya tienes cuenta? <a href="index.html">Inicia sesión aquí</a>
+      </p>
+    </div>
+  </div>
+
+  <!-- 🎄🎉 CAMBIO AUTOMÁTICO DE FONDO + ACTIVAR/DESACTIVAR NIEVE -->
+  <script>
+  (() => {
+    const IMG_NORMAL     = "LogoApplebees.png";
+    const IMG_NAVIDAD    = "imageapplenavidad.png";
+    const IMG_ANIO_NUEVO = "imageanonuevo.png";
+
+    const snowCanvas = document.getElementById("snowCanvas");
+
+    const today = new Date();
+    today.setHours(0,0,0,0);
+    const y = today.getFullYear();
+
+    const navStart = new Date(y, 11, 18);
+    const navEnd   = new Date(y, 11, 31);
+
+    const newYearStart = new Date(y + 1, 0, 1);
+    const newYearEnd   = new Date(y + 1, 0, 14);
+
+    let bg = IMG_NORMAL;
+    let showSnow = false;
+
+    if (today >= navStart && today <= navEnd) {
+      bg = IMG_NAVIDAD;
+      showSnow = true;
+    } else if (today >= newYearStart && today <= newYearEnd) {
+      bg = IMG_ANIO_NUEVO;
+      showSnow = true;
+    }
+
+    document.body.style.backgroundImage = `url("${bg}")`;
+    snowCanvas.style.display = showSnow ? "block" : "none";
+  })();
+  </script>
+
+  <!-- ❄️ EFECTO NIEVE -->
+  <script>
+  (() => {
+    const canvas = document.getElementById("snowCanvas");
+    const ctx = canvas.getContext("2d");
+
+    let w, h;
+    const flakes = [];
+    const FLAKE_COUNT = 120;
+
+    function resize() {
+      w = canvas.width  = window.innerWidth;
+      h = canvas.height = window.innerHeight;
+    }
+    window.addEventListener("resize", resize);
+    resize();
+
+    function createFlake() {
+      return {
+        x: Math.random() * w,
+        y: Math.random() * h,
+        r: Math.random() * 3 + 1,
+        d: Math.random() * 1 + 0.5,
+        s: Math.random() * 0.5 + 0.2
+      };
+    }
+
+    for (let i = 0; i < FLAKE_COUNT; i++) flakes.push(createFlake());
+
+    function draw() {
+      // si está oculto, no gastes CPU
+      if (canvas.style.display === "none") return requestAnimationFrame(draw);
+
+      ctx.clearRect(0, 0, w, h);
+      ctx.fillStyle = "rgba(255,255,255,0.85)";
+      ctx.beginPath();
+
+      for (const f of flakes) {
+        ctx.moveTo(f.x, f.y);
+        ctx.arc(f.x, f.y, f.r, 0, Math.PI * 2);
+      }
+
+      ctx.fill();
+      update();
+      requestAnimationFrame(draw);
+    }
+
+    function update() {
+      for (const f of flakes) {
+        f.y += f.d;
+        f.x += Math.sin(f.y * f.s);
+
+        if (f.y > h) {
+          f.y = -5;
+          f.x = Math.random() * w;
+        }
+      }
+    }
+
+    draw();
+  })();
+  </script>
+
+  <!-- 🧠 TOOLTIP TÁCTIL -->
+  <script>
+  document.querySelectorAll('.tooltip').forEach(tip => {
+    tip.addEventListener('click', e => {
+      e.stopPropagation();
+      document.querySelectorAll('.tooltip.active').forEach(t => {
+        if (t !== tip) t.classList.remove('active');
+      });
+      tip.classList.toggle('active');
+    });
+  });
+
+  document.addEventListener('click', () => {
+    document.querySelectorAll('.tooltip.active').forEach(t => t.classList.remove('active'));
+  });
+  </script>
+
+  <!-- Firebase (compat) -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+  <script src="firebase-config.js"></script>
+  <script src="auth.js"></script>
+
+</body>
+</html>

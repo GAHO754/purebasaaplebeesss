@@ -1,0 +1,297 @@
+/* style.css (adaptado a look & feel "App móvil") */
+*{
+  margin:0;
+  padding:0;
+  box-sizing:border-box;
+  font-family:"Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif;
+}
+
+/* ✅ BODY centrado + soporta móviles (safe-area / teclado / alto real) */
+body{
+  background: url('LogoApplebees.png') no-repeat center center fixed; /* fallback */
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  color:#fff;
+
+  /* ✅ Alto real moderno (evita problemas con barras del navegador móvil) */
+  min-height:100vh;
+  min-height:100svh;
+
+  display:flex;
+  align-items:center;
+  justify-content:center;
+
+  position:relative;
+  overflow:hidden;
+  padding: 18px; /* ✅ evita que se pegue a bordes en móvil */
+  padding-top: calc(18px + env(safe-area-inset-top));
+  padding-bottom: calc(18px + env(safe-area-inset-bottom));
+}
+
+/* ✅ Overlay oscuro (arriba del canvas) */
+body::before{
+  content:"";
+  position:absolute;
+  inset:0;
+  background: rgba(0,0,0,0.62);
+  z-index:1;
+}
+
+/* ✅ Nieve atrás del overlay */
+#snowCanvas{
+  position:fixed;
+  inset:0;
+  z-index:0;
+  pointer-events:none;
+}
+
+/* ✅ Contenedor: ancho perfecto para móvil + tablet + desktop */
+.container{
+   width:100%;
+  max-width: 460px;
+  position:relative;
+  z-index:2;
+  margin:0 auto;
+  padding: 0; /* el padding ya lo maneja el body */
+}
+
+/* ✅ Tarjeta con look de app */
+.form-card{
+  background: rgba(20,20,20,0.92);
+  border: 1px solid rgba(255,255,255,0.10);
+  border-radius: 20px;
+  padding: 26px 22px;
+  box-shadow: 0 18px 55px rgba(0,0,0,0.55), 0 0 22px rgba(158,3,3,0.35);
+  text-align:center;
+  backdrop-filter: blur(10px);
+}
+
+/* ✅ Título más "app" */
+h1{
+  margin-bottom: 18px;
+  color:#ff2a2a;
+  font-size: 22px;
+  letter-spacing: .2px;
+}
+
+/* ✅ Inputs tipo app */
+input{
+  width:100%;
+  min-height: 48px; /* touch friendly */
+  padding: 12px 14px;
+  margin-bottom: 14px;
+
+  border: 1px solid rgba(255,255,255,0.10);
+  border-radius: 14px;
+
+  background: rgba(255,255,255,0.08);
+  color:#fff;
+  font-size:16px; /* evita zoom en iOS */
+  outline:none;
+
+  transition: border-color .2s ease, background .2s ease, transform .05s ease;
+}
+
+input::placeholder{
+  color: rgba(255,255,255,0.55);
+}
+
+input:focus{
+  border-color: rgba(231,30,30,0.65);
+  background: rgba(255,255,255,0.10);
+}
+
+/* ✅ Botón principal tipo app */
+button{
+  width:100%;
+  min-height: 50px;
+  padding: 12px 14px;
+
+  background: linear-gradient(180deg, #ff2a2a 0%, #e71e1e 100%);
+  color: #fff;
+
+  border:none;
+  border-radius: 14px;
+
+  font-size:16px;
+  font-weight: 700;
+  cursor:pointer;
+
+  transition: transform .12s ease, filter .2s ease, box-shadow .2s ease;
+  box-shadow: 0 14px 28px rgba(231,30,30,0.20);
+}
+
+button:hover{
+  filter: brightness(1.02);
+  box-shadow: 0 16px 34px rgba(231,30,30,0.26);
+}
+
+button:active{
+  transform: scale(0.99);
+}
+
+/* ✅ Links */
+.link{
+  margin-top: 12px;
+  font-size: 14px;
+  color: rgba(255,255,255,0.75);
+}
+
+.link a{
+  color: #2dbb20;
+  font-weight: 600;
+  text-decoration:none;
+}
+
+.link a:hover{
+  text-decoration:underline;
+}
+
+/* ==========================================
+   TOOLTIP UNIVERSAL (PC + MÓVILES)
+   ========================================== */
+
+.field-group{
+  display:flex;
+  align-items:center;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.field-group input{
+  flex:1;
+  margin-bottom:0;
+}
+
+/* Ícono ❓ */
+.tooltip{
+  position:relative;
+  cursor:pointer;
+  color:#ff4f88;
+  font-weight:800;
+  font-size: 16px;
+  line-height: 1;
+  user-select:none;
+  min-width: 20px;
+  display:grid;
+  place-items:center;
+}
+
+/* Caja del texto */
+.tooltip .tooltiptext{
+  visibility:hidden;
+  width: 240px;
+
+  background-color: rgba(25,25,25,0.96);
+  border: 1px solid rgba(255,255,255,0.10);
+  color:#fff;
+
+  text-align:left;
+  border-radius: 12px;
+  padding: 10px 10px;
+
+  position:absolute;
+  z-index:10;
+  top: 140%;
+  left: 50%;
+  transform: translateX(-50%) translateY(-2px) scale(0.98);
+  opacity:0;
+
+  transition: opacity .2s ease, transform .2s ease;
+  font-size: 12.8px;
+  line-height: 1.35;
+
+  pointer-events:none;
+  box-shadow: 0 18px 40px rgba(0,0,0,0.45);
+}
+
+/* Flechita */
+.tooltip .tooltiptext::after{
+  content:"";
+  position:absolute;
+  top: -7px;
+  left: 50%;
+  transform: translateX(-50%);
+  border-width: 7px;
+  border-style: solid;
+  border-color: transparent transparent rgba(25,25,25,0.96) transparent;
+}
+
+/* Mostrar al pasar el mouse (PC) */
+.tooltip:hover .tooltiptext{
+  visibility:visible;
+  opacity:1;
+  transform: translateX(-50%) translateY(0) scale(1);
+  pointer-events:auto;
+}
+
+/* Mostrar al tocar (móvil) */
+.tooltip.active .tooltiptext{
+  visibility:visible;
+  opacity:1;
+  transform: translateX(-50%) translateY(0) scale(1);
+  pointer-events:auto;
+}
+
+/* ✅ Ajuste extra para pantallas MUY pequeñas */
+@media (max-width: 380px){
+  .form-card{ padding: 22px 18px; border-radius: 18px; }
+  h1{ font-size: 20px; }
+  .tooltip .tooltiptext{ width: 220px; }
+}
+
+/* ✅ Tablets / iPad: un poco más "aire" */
+@media (min-width: 760px){
+  .form-card{ padding: 30px 26px; }
+}
+
+
+/* ===== FIX CENTRADO LOGIN (PC + MÓVIL) ===== */
+html, body { height: 100%; }
+
+body{
+  margin: 0;
+  /* importante: tu fondo se queda igual */
+}
+
+.container{
+  min-height: 100vh;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+}
+
+/* Evita que la tarjeta se estire de más y se mantenga centrada */
+.form-card{
+  width: min(420px, 92vw);
+  margin: 0 auto;
+}
+
+/* ===== PWA BANNER FLOTANTE (NO MUEVE EL DISEÑO) ===== */
+.pwa-install{
+  position: fixed !important;
+  left: 16px;
+  bottom: 16px;
+  z-index: 9999;
+  max-width: 340px;
+  width: auto;
+  pointer-events: auto;
+}
+
+/* En pantallas pequeñas, que se adapte sin tapar */
+@media (max-width: 480px){
+  .pwa-install{
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    max-width: none;
+    width: calc(100% - 24px);
+  }
+}
+/* Ocultar banner PWA en escritorio (solo móvil) */
+@media (min-width: 900px){
+  .pwa-install{ display:none; }
+}
