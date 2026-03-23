@@ -366,35 +366,37 @@
       <div class="upload-area">
         <div class="grid-2">
           <div>
-            <label>Número de ticket</label>
-            <div class="locked-field" id="viewTicketNumero">—</div>
-            <input type="hidden" id="inputTicketNumero" />
+            <label>Número de ticket (Folio)</label>
+            <input type="text" id="inputTicketNumero" class="input-manual" style="background: rgba(255,255,255,0.05); pointer-events: none;" placeholder="—" readonly />
           </div>
 
           <div>
             <label>Fecha de consumo</label>
-            <div class="locked-field" id="viewTicketFecha">—</div>
-            <input type="hidden" id="inputTicketFecha" />
+            <input type="text" id="inputTicketFecha" class="input-manual" style="background: rgba(255,255,255,0.05); pointer-events: none;" placeholder="—" readonly />
           </div>
         </div>
 
-        <!-- ✅ MESERO MANUAL -->
-        <label>Mesero (escríbelo como aparece en tu ticket)</label>
-        <input
-          type="text"
-          id="inputTicketMesero"
-          class="input-manual"
-          placeholder=""
-          autocomplete="off"
-          maxlength="40"
-        />
-        <div class="hint">Obligatorio para mejor control interno.</div>
+        <div style="margin-top: 10px;">
+            <label>Mesero (escríbelo como aparece en tu ticket)</label>
+            <input
+              type="text"
+              id="inputTicketMesero"
+              class="input-manual"
+              placeholder="Ej: JUAN PEREZ"
+              autocomplete="off"
+              maxlength="40"
+            />
+            <div class="hint">Obligatorio para cuentas mayores a $2,000.</div>
+        </div>
 
-        <label>Total pagado</label>
-        <div class="locked-field" id="viewTicketTotal">—</div>
-        <input type="hidden" id="inputTicketTotal" />
+        <div style="margin-top: 10px;">
+            <label>Total pagado</label>
+            <input type="text" id="inputTicketTotal" class="input-manual" style="background: rgba(255,255,255,0.05); pointer-events: none; font-weight: 800; color: #9be49b;" placeholder="$0.00" readonly />
+        </div>
 
-        <button id="btnRegistrarTicket" type="button" class="btn-cta" disabled>Registrar Ticket</button>
+        <button id="btnRegistrarTicket" type="button" class="btn-cta" style="margin-top: 15px; width: 100%;" disabled>
+            Registrar Ticket
+        </button>
       </div>
 
       <div class="ticket-result">
