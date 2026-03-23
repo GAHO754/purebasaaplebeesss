@@ -340,17 +340,28 @@ function isLikelyTicket(text, lines) {
 async function preprocessImage(file) {
   const bmp = await createImageBitmap(file);
   let w = bmp.width, h = bmp.height, rotate = false;
+  
+  // Si la imagen es muy ancha, probablemente esté de lado
   if (w > h * 1.6) rotate = true;
 
   const targetH = 2800;
   const scale = Math.max(1.4, Math.min(3.2, targetH / (rotate ? w : h)));
 
   const c = document.createElement("canvas");
-  if (rotate) { c.width = Math.round(h * scale); c.height = Math.round(w * scale); }
-  else { c.width = Math.round(w * scale); c.height = Math.round(h * scale); }
+  if (rotate) { 
+    c.width = Math.round(h * scale); 
+    c.height = Math.round(w * scale); 
+  } else { 
+    c.width = Math.round(w * scale); 
+    c.height = Math.round(h * scale); 
+  }
 
   const ctx = c.getContext("2d");
-  ctx.filter = "grayscale(1) contrast(1.35) brightness(1.05)";
+
+  // ✅ MEJORA AQUÍ: Subimos el contraste a 1.8 y ajustamos el brillo a 1.1
+  // Esto hace que el texto sea mucho más "negro" y el fondo mucho más "blanco"
+  ctx.filter = "grayscale(1) contrast(1.8) brightness(1.1)";
+
   if (rotate) {
     ctx.translate(c.width / 2, c.height / 2);
     ctx.rotate(Math.PI / 2);
@@ -359,12 +370,14 @@ async function preprocessImage(file) {
     ctx.drawImage(bmp, 0, 0, c.width, c.height);
   }
 
+  // Si tienes OpenCV cargado, esto ayudará a limpiar el ruido de la imagen
   if (typeof cv !== "undefined" && cv?.Mat) {
     try {
       let src = cv.imread(c);
       let gray = new cv.Mat();
       cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
       let bw = new cv.Mat();
+      // Umbral adaptativo para manejar sombras en la foto del ticket
       cv.adaptiveThreshold(gray, bw, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 35, 5);
       cv.imshow(c, bw);
       src.delete(); gray.delete(); bw.delete();
@@ -372,6 +385,7 @@ async function preprocessImage(file) {
       console.warn("OpenCV preprocess falló:", e);
     }
   }
+  
   return c;
 }
 
@@ -528,15 +542,26 @@ window.processTicketWithIA = async function processTicketWithIA(file) {
     dbgNote("IA falló, se usa heurística");
   }
 
-  // Normalizaciones finales
-  if (!/^\d{5,7}$/.test(String(folio||""))) folio = String(folio||"").match(/\b\d{5,7}\b/)?.[0] || "";
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(fecha||""))) fecha = "";
-  if (!Number.isFinite(total)) total = 0;
+ if (!/^\d{3,10}$/.test(String(folio || ""))) {
+    const match = String(folio || "").match(/\b\d{3,10}\b/);
+    folio = match ? match[0] : "";
+  }
 
+  // Validamos que la fecha tenga el formato correcto
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(fecha || ""))) {
+    fecha = "";
+  }
+
+  // Aseguramos que el total sea un número
+  if (!Number.isFinite(total)) {
+    total = 0;
+  }
+
+  // Limpieza del nombre del mesero
   if (mesero) {
     mesero = String(mesero)
       .replace(/[^A-ZÁÉÍÓÚÑ\s]/gi, "")
-      .replace(/\s+/g," ")
+      .replace(/\s+/g, " ")
       .trim()
       .toUpperCase();
   } else {
@@ -545,21 +570,20 @@ window.processTicketWithIA = async function processTicketWithIA(file) {
 
   dbgDump();
 
-  // ✅ VALIDACIÓN FINAL DEL TICKET
-const isValidTicket =
-  /^\d{5,7}$/.test(folio) &&
-  /^\d{4}-\d{2}-\d{2}$/.test(fecha) &&
-  Number.isFinite(total) &&
-  total > 0;
+  // ✅ VALIDACIÓN FINAL DEL TICKET (VERSIÓN PERMISIVA)
+  // Ahora el ticket es válido si tiene AL MENOS un folio de 3 cifras, una fecha y un total mayor a 0.
+  const isValidTicket = 
+    folio.length >= 3 && 
+    fecha !== "" && 
+    total > 0;
 
-dbgNote(`VALIDACIÓN FINAL: ${isValidTicket ? "OK" : "ERROR"}`);
+  dbgNote(`VALIDACIÓN FINAL: ${isValidTicket ? "OK" : "ERROR"}`);
 
-return {
-  folio,
-  fecha,
-  total,
-  mesero,
-  isValid: isValidTicket
-};
-
-};
+  return {
+    folio,
+    fecha,
+    total,
+    mesero,
+    isValid: isValidTicket
+  };
+}; // <--- Cierre de window.processTicketWithIA
