@@ -42,18 +42,42 @@ function splitLines(text) {
 }
 function normalizeNum(raw) {
   if (!raw) return null;
+
+  // 1. Limpieza inicial: quitar $, letras y espacios raros, pero mantener el signo menos y separadores
   let s = String(raw).replace(/[^\d.,-]/g, "").trim();
   if (!s) return null;
 
+  // 2. Manejo de separadores (Puntos y Comas)
+  // Si hay ambos (ej: 1,250.50 o 1.250,50)
   if (s.includes(",") && s.includes(".")) {
-    if (s.lastIndexOf(".") > s.lastIndexOf(",")) s = s.replace(/,/g, "");
-    else s = s.replace(/\./g, "").replace(",", ".");
-  } else if (s.includes(",")) {
-    const m = s.match(/,\d{2}$/);
-    s = m ? s.replace(",", ".") : s.replace(/,/g, "");
+    // Si el punto está al final, es el decimal (formato US: 1,250.50)
+    if (s.lastIndexOf(".") > s.lastIndexOf(",")) {
+      s = s.replace(/,/g, ""); // Quitamos la coma de miles
+    } else {
+      // Si la coma está al final, es el decimal (formato EU: 1.250,50)
+      s = s.replace(/\./g, "").replace(",", ".");
+    }
+  } 
+  // 3. Si solo hay COMAS (ej: 566,00)
+  else if (s.includes(",")) {
+    // Si hay exactamente 2 dígitos tras la coma, es decimal
+    const m = s.match(/,(\d{2})$/);
+    if (m) {
+      s = s.replace(",", ".");
+    } else {
+      // Si no, era un separador de miles erróneo
+      s = s.replace(/,/g, "");
+    }
   }
+
+  // 4. Conversión final
   const n = parseFloat(s);
-  return Number.isFinite(n) ? +n.toFixed(2) : null;
+  
+  // Verificamos que sea un número real y no un NaN
+  if (!Number.isFinite(n)) return null;
+
+  // Retornamos con máximo 2 decimales (importante para el dinero)
+  return Math.round((n + Number.EPSILON) * 100) / 100;
 }
 function extractDateISO(text) {
   const m = String(text || "").match(/(\d{1,2})[\/\-.](\d{1,2})[\/\-.](20\d{2})/);
@@ -94,148 +118,95 @@ function extractFolio(lines) {
   return "";
 }
 
+// ✅ SUCURSAL AUTOMÁTICA
+function extractStore(rawText) {
+  const upper = String(rawText || "").toUpperCase();
+  if (upper.includes("TORRES")) return { id: "Torres", name: "Applebee's Torres" };
+  if (upper.includes("TECNOLOGICO")) return { id: "Tecnologico", name: "Applebee's Tecnológico" };
+  if (upper.includes("TRIUNFO")) return { id: "Paseo Triunfo", name: "Applebee's Paseo Triunfo" };
+  return { id: "APB_PASEO", name: "Applebee’s Paseo Central" };
+}
+
 /* ============================================================
-   ✅ TOTAL MEJORADO (prioridad absoluta a la línea "Total 566.00")
-   - NO toma Sub-total, IVA, Impt.Total, Propina, Tip, etc.
-   - Si no encuentra un Total válido, NO inventa.
+   ✅ TOTAL MEJORADO (Condiciones: Subtotal+IVA y Sin Propina)
+   - Si detecta Subtotal e IVA, esa suma es la PRIORIDAD.
+   - Si detecta "Total con Propina", busca el monto sin propina.
+   - Ignora líneas de propina, tarjeta o cambio.
    ============================================================ */
 function detectGrandTotal(lines) {
   const isCard = (s) => /\b(visa|master|amex|tarjeta|card)\b/i.test(s);
 
-  // Normalización para comparar etiquetas (tolerante a OCR)
   const norm = (s) => String(s || "")
     .toLowerCase()
     .replace(/[’']/g, "")
     .replace(/\s+/g, " ")
     .trim();
 
-  // Extrae el ÚLTIMO número con centavos de una línea
   const grabLastMoney = (s) => {
-    const mm = String(s).match(/(\$?\s*\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})|\$?\s*\d+(?:[.,]\d{2}))/g);
+    const mm = String(s).match(/(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})|\d+(?:[.,]\d{2}))/g);
     if (!mm || !mm.length) return null;
     return normalizeNum(mm[mm.length - 1]);
   };
 
-  // ========= 1) Detectar SUBTOTAL e IVA para calcular "esperado" =========
   let subtotal = null;
   let iva = null;
 
   const RX_SUB = /\b(sub\s*[- ]?\s*total|subtotal)\b/i;
   const RX_IVA = /\biva\b|\bimpuesto\b/i;
 
+  // 1. Buscamos Subtotal e IVA primero
   for (let i = 0; i < lines.length; i++) {
     const l0 = String(lines[i] || "");
-    const l = norm(l0);
-    if (isCard(l)) continue;
+    if (isCard(l0)) continue;
 
-    // Subtotal
     if (subtotal == null && RX_SUB.test(l0)) {
-      const v = grabLastMoney(l0) ?? grabLastMoney(lines[i + 1] || "");
-      if (Number.isFinite(v)) {
-        subtotal = v;
-        dbgNote(`Subtotal detectado: ${subtotal} @${i}`);
-      }
-      continue;
+      subtotal = grabLastMoney(l0) ?? grabLastMoney(lines[i + 1] || "");
+      if (subtotal) dbgNote(`Subtotal hallado: ${subtotal}`);
     }
 
-    // IVA (evita confundir con "Impt.Total" si viene aparte)
-    if (iva == null && RX_IVA.test(l0) && !/\bimpt\.?\s*total\b|\bimp\.?\s*total\b/i.test(l0)) {
-      const v = grabLastMoney(l0) ?? grabLastMoney(lines[i + 1] || "");
-      if (Number.isFinite(v)) {
-        iva = v;
-        dbgNote(`IVA detectado: ${iva} @${i}`);
-      }
-      continue;
+    if (iva == null && RX_IVA.test(l0) && !/total/i.test(l0)) {
+      iva = grabLastMoney(l0) ?? grabLastMoney(lines[i + 1] || "");
+      if (iva) dbgNote(`IVA hallado: ${iva}`);
     }
   }
 
-  const expected = (Number.isFinite(subtotal) && Number.isFinite(iva))
-    ? +((subtotal + iva).toFixed(2))
-    : null;
+  // REGLA DE ORO: Si tengo Subtotal e IVA, esa es mi suma real (evita propinas)
+  const expected = (subtotal && iva) ? Number((subtotal + iva).toFixed(2)) : null;
+  if (expected) dbgNote(`Suma Forzada (Sub+IVA): ${expected}`);
 
-  if (expected != null) dbgNote(`Expected (subtotal+iva): ${expected}`);
+  // 2. Buscar etiquetas de TOTAL ignorando Propina
+  // Añadimos "propina" y "tip" a la lista negra (BAD)
+  const BAD = /\b(subtotal|iva|impuesto|propina|tip|gratuit|cambio|efectivo|pago|visa|master)\b/i;
 
-  // ========= 2) Buscar candidatos SOLO en líneas que digan "Total" =========
-  // Reglas para ignorar totales NO deseados
-  const BAD = /\b(sub\s*[- ]?\s*total|subtotal|iva|impuesto|impt\.?\s*total|imp\.?\s*total|propina|tip|cambio|efectivo|pago)\b/i;
-
-  // "Total" bueno: contiene total pero NO contiene BAD
-  const isGoodTotalLabel = (line) => {
-    if (!/\btotal\b/i.test(line)) return false;
-    if (BAD.test(line)) return false;
-    return true;
-  };
-
-  // Candidatos con score
   const cands = [];
-
   for (let i = 0; i < lines.length; i++) {
     const raw = String(lines[i] || "");
-    if (isCard(raw)) continue;
+    const n = norm(raw);
 
-    if (isGoodTotalLabel(raw)) {
-      // Caso A: Total + monto en la misma línea
+    // Solo líneas que digan TOTAL pero que NO tengan palabras prohibidas (como propina)
+    if (/\btotal\b/i.test(raw) && !BAD.test(n)) {
       let v = grabLastMoney(raw);
-
-      // Caso B: Total en una línea y monto en la siguiente
-      if (v == null) {
-        const next = String(lines[i + 1] || "");
-        if (next && !BAD.test(next)) v = grabLastMoney(next);
-      }
+      if (v == null) v = grabLastMoney(lines[i + 1] || "");
 
       if (Number.isFinite(v)) {
         let score = 100;
-
-        // Preferir si coincide con expected
         if (expected != null) {
           const diff = Math.abs(v - expected);
-          // mientras más cerca, mejor
-          score += Math.max(0, 50 - diff * 20); // diff 0 => +50, diff 1 => +30, diff 2 => +10
+          if (diff < 0.5) score += 50; // Si coincide con Sub+IVA, es el ganador
         }
-
-        // Bonus si la línea es exactamente "total" (muy común en tu foto)
-        const n = norm(raw);
-        if (n === "total" || n.startsWith("total ")) score += 10;
-
-        cands.push({ v, i, score, raw });
-        dbgNote(`Cand TOTAL: ${v} score=${score} @${i} (${raw})`);
+        cands.push({ v, score });
       }
     }
   }
 
-  // ========= 3) Si hay expected, usarlo para escoger el mejor candidato =========
+  // 3. Decisión final
+  if (expected) return expected; // Si pudimos calcular Sub+IVA, devolvemos eso (tu condición principal)
+
   if (cands.length) {
     cands.sort((a, b) => b.score - a.score);
-    const pick = cands[0];
-
-    // Si hay expected, y el mejor candidato se aleja muchísimo, preferimos expected
-    if (expected != null) {
-      const diff = Math.abs(pick.v - expected);
-
-      // tolerancia (tickets reales tienen 1-2 centavos a veces por OCR)
-      if (diff <= 1.00) {
-        dbgNote(`Total elegido (cand cercano a expected): ${pick.v} diff=${diff}`);
-        return pick.v;
-      }
-
-      // Si el OCR leyó mal el total pero sí leyó bien subtotal+iva, usar expected
-      // (esto evita “inventos” en cuentas altas)
-      dbgNote(`Total cand lejos (diff=${diff}). Uso expected=${expected}`);
-      return expected;
-    }
-
-    dbgNote(`Total elegido (sin expected): ${pick.v}`);
-    return pick.v;
+    return cands[0].v;
   }
 
-  // ========= 4) Si NO encontramos TOTAL por etiqueta, pero sí tenemos expected, usarlo =========
-  if (expected != null) {
-    dbgNote(`No hallé etiqueta TOTAL. Uso expected subtotal+iva: ${expected}`);
-    return expected;
-  }
-
-  // ========= 5) Sin total: regresar null (NO inventar) =========
-  dbgNote("Total no encontrado (sin inventar)");
   return null;
 }
 
@@ -470,6 +441,29 @@ Reglas:
   }
 }
 
+
+/* ============================================================
+   ✅ AUDITORÍA DE PRODUCTOS (Suma de consumo)
+   ============================================================ */
+function auditProductSum(lines) {
+  let runningSum = 0;
+  const productRegex = /(?:^|\s)(\d+)?\s+[A-ZÁÉÍÓÚÑ\s]{3,}\s+(\d+[.,]\d{2})(?:\s|$)/i;
+
+  lines.forEach(line => {
+    if (/\b(total|sub|iva|impuesto|propina|tip|pago|cambio)\b/i.test(line.toLowerCase())) return;
+
+    const match = line.match(productRegex);
+    if (match) {
+      const price = normalizeNum(match[2]);
+      if (price && price > 0) {
+        runningSum += price;
+        dbgNote(`Producto detectado: ${line} -> +${price}`);
+      }
+    }
+  });
+
+  return Math.round((runningSum + Number.EPSILON) * 100) / 100;
+}
 /* ============================================================
    ✅ FUNCIÓN PRINCIPAL (la que usa registrar.js)
    ============================================================ */
@@ -478,69 +472,50 @@ window.processTicketWithIA = async function processTicketWithIA(file) {
   DBG.notes = [];
   dbgNote("processTicketWithIA: inicio");
 
-  // 1) Preprocesado
   const canvas = await preprocessImage(file);
-  dbgNote(`preprocess: ok (${canvas.width}x${canvas.height})`);
-
-  // 2) OCR
   const rawText = await runTesseract(canvas);
-  dbgNote(`tesseract chars: ${rawText.length}`);
-
   const lines = splitLines(rawText);
-  dbgNote(`lines: ${lines.length}`);
 
-  // 3) Validación básica (si no parece ticket)
   if (!isLikelyTicket(rawText, lines)) {
-    dbgNote("No parece ticket (isLikelyTicket=false)");
-    setIABadge('err', '(no ticket)');
-    dbgDump();
+    dbgNote("No parece ticket");
     return { folio:"", fecha:"", total:0, mesero:"" };
   }
 
-  // 4) Extracción por heurísticas
+  // 1) Extracción Base
   let folio = extractFolio(lines);
   let fecha = extractDateISO(rawText);
   let total = detectGrandTotal(lines);
   let mesero = extractMesero(rawText, lines);
+  
+  // 2) 🛡️ Auditoría y Sucursal
+  let store = extractStore(rawText);
+  let sumaProductos = auditProductSum(lines);
 
-  dbgNote(`heurística -> folio=${folio} fecha=${fecha} total=${total} mesero=${mesero}`);
-
-  // 5) IA opcional (si está configurada)
-  // ✅ REGLA: La IA SOLO puede completar lo que falte.
-  // ✅ Y NO puede sobre-escribir un TOTAL ya encontrado por heurística.
+  // 3) IA opcional
   try {
     if (OPENAI_API_KEY || OPENAI_PROXY_ENDPOINT) {
       const j = await callOpenAI(rawText);
-
       if (j && typeof j === "object") {
         if (!folio && j.folio) folio = String(j.folio).trim();
         if (!fecha && j.fecha) fecha = String(j.fecha).trim();
-
-        // 👇 IMPORTANTE: solo usar IA para total si NO encontramos total por heurística
         if ((!total || total === 0) && Number.isFinite(j.total)) total = Number(j.total);
-
         if (!mesero && j.mesero) mesero = String(j.mesero).trim();
-
-        dbgNote(`IA merge -> folio=${folio} fecha=${fecha} total=${total} mesero=${mesero}`);
       }
     }
-  } catch (e) {
-    dbgNote("IA falló, se usa heurística");
+  } catch (e) { dbgNote("IA falló"); }
+
+  // 4) Limpieza Final
+  if (!/^\d{3,10}$/.test(String(folio || ""))) {
+    folio = String(folio || "").match(/\b\d{3,10}\b/)?.[0] || "";
   }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(fecha || ""))) fecha = "";
+  total = Number(total || 0);
+  mesero = mesero ? mesero.trim().toUpperCase() : "";
 
-  // Normalizaciones finales
-  if (!/^\d{5,7}$/.test(String(folio||""))) folio = String(folio||"").match(/\b\d{5,7}\b/)?.[0] || "";
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(fecha||""))) fecha = "";
-  if (!Number.isFinite(total)) total = 0;
-
-  if (mesero) {
-    mesero = String(mesero)
-      .replace(/[^A-ZÁÉÍÓÚÑ\s]/gi, "")
-      .replace(/\s+/g," ")
-      .trim()
-      .toUpperCase();
-  } else {
-    mesero = "";
+  // 5) 🛡️ Blindaje de Auditoría
+  let isAuditOk = true;
+  if (sumaProductos > 0 && total > 0) {
+    if (Math.abs(total - sumaProductos) > 2.00) isAuditOk = false;
   }
 
   dbgDump();
@@ -549,6 +524,11 @@ window.processTicketWithIA = async function processTicketWithIA(file) {
     folio,
     fecha,
     total,
-    mesero
+    mesero,
+    storeId: store.id,
+    storeName: store.name,
+    sumaAuditoria: sumaProductos,
+    auditOk: isAuditOk,
+    isValid: (folio.length >= 3 && total > 0 && isAuditOk)
   };
 };
