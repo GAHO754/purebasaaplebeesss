@@ -1,17 +1,12 @@
 // registrar.js — RTDB + Cámara + OCR AUTO + Bloqueo total + Mesero + resumen claro (Saldo)
-
 (() => {
   console.log("[registrar.js] cargado");
 
   const $ = id => document.getElementById(id);
 
-  const storage = firebase.storage();
+  // ===== Firebase =====
   const auth = firebase.auth();
-  const db = firebase.database();
-
-  // resto de tu código...
-
-
+  const db   = firebase.database();
 
   // ================= LIVE EVENTS (MÓDULO 1) =================
   async function pushLiveEvent(payload){
@@ -210,139 +205,87 @@
     return s.replace(/[^A-ZÁÉÍÓÚÑ\s]/gi,"").replace(/\s+/g," ").trim().toUpperCase();
   }
 
-
-
-async function uploadTicketImage(file, folio) {
-  try {
-    const user = firebase.auth().currentUser;
-    if (!user) throw new Error("Usuario no autenticado");
-
-    const storageRef = firebase.storage().ref();
-    const safeFolio = folio || "no_folio";
-    const path = `ticketsImages/${user.uid}/${safeFolio}_${Date.now()}.jpg`;
-
-
-    const snapshot = await storageRef.child(path).put(file);
-    const url = await snapshot.ref.getDownloadURL();
-
-    console.log("✅ Imagen subida:", url);
-    return url;
-
-  } catch (err) {
-    console.error("❌ Error subiendo imagen:", err);
-    return "";
-  }
-}
-
   async function autoProcessCurrentFile() {
-  const file = fileInput?.files?.[0];
-
-  // ✅ VALIDACIÓN DE ARCHIVO
-  if (!file || !(file instanceof Blob)) {
-    console.error("❌ Archivo inválido:", file);
-    setStatus("Error con la imagen. Intenta otra vez.", "err");
-    return;
-  }
-
-  const ready = await waitForOCR();
-  if (!ready) {
-    console.warn("[autoProcess] OCR no listo");
-    setStatus("No se pudo iniciar el OCR. Revisa la consola.", "err");
-    return;
-  }
-
-  try {
-    setStatus("🕐 Escaneando ticket…");
-    lockInputs();
-    if (btnRegistrar) btnRegistrar.disabled = true;
-
-    const ret = await window.processTicketWithIA(file);
-
-    const folio  = (ret?.folio || "").toString().trim();
-    const fecha  = (ret?.fecha || "").toString().trim();
-    const total  = Number(ret?.total || 0);
-    const mesero = sanitizeMesero(iMesero?.value);
-    const isValid = ret?.isValid;
-
-    // 🧠 DEBUG (CLAVE)
-    console.log("DEBUG OCR:", { folio, fecha, total, isValid });
-
-    // ✅ Asignar valores a inputs
-    if (iNum) iNum.value = folio;
-    if (iFecha) iFecha.value = fecha;
-    if (iMesero) iMesero.value = mesero;
-    if (iTotal) iTotal.value = (Number.isFinite(total) ? total : 0).toFixed(2);
-
-    window.lastOCRTotal = total;
-
-    // ✅ VALIDACIONES
-    const okFolio = /^\d{5,7}$/.test(folio);
-    const okFecha = /^\d{4}-\d{2}-\d{2}$/.test(fecha);
-    const okTotal = Number.isFinite(total) && total > 0;
-
-    // ❌ VALIDACIÓN GENERAL OCR
-    if (!isValid) {
-      setStatus("❌ Ticket no válido. Asegúrate que se vea FOLIO, FECHA y TOTAL.", "err");
-
-      msgTicket.className = 'validacion-msg err';
-      msgTicket.textContent = "La imagen no cumple validación.";
-
+    const file = fileInput?.files?.[0];
+    if (!file) {
+      setStatus("Sube o toma la foto del ticket primero.", "err");
       return;
     }
 
-    // ❌ VALIDACIÓN DE TOTAL (AQUÍ ESTABA TU PROBLEMA)
-    if (!okTotal) {
-      setStatus("❌ No se detectó el TOTAL correctamente. Toma otra foto.", "err");
-      if (btnRegistrar) btnRegistrar.disabled = true;
+    const ready = await waitForOCR();
+    if (!ready) {
+      console.warn("[autoProcess] OCR no listo (processTicketWithIA no encontrada)");
+      setStatus("No se pudo iniciar el OCR. Revisa la consola.", "err");
       return;
     }
 
-    // ✅ MENSAJE OK
-    const meseroTxt = mesero ? ` · Mesero: ${mesero}` : "";
-    setStatus(`✓ Ticket leído. Folio: ${folio} · Fecha: ${fecha} · Total: ${total}${meseroTxt}`, "ok");
-
-    // ✅ SUBIR IMAGEN
-    let imageUrl = "";
     try {
-      imageUrl = await uploadTicketImage(file, folio);
-      window.lastTicketImage = imageUrl;
+      setStatus("🕐 Escaneando ticket…");
+      lockInputs();
+      btnRegistrar && (btnRegistrar.disabled = true);
+
+      const ret = await window.processTicketWithIA(file);
+
+      const folio  = (ret?.folio||"").toString().trim();
+      const fecha  = (ret?.fecha||"").toString().trim();
+      const total  = Number(ret?.total||0);
+      const mesero = sanitizeMesero(iMesero?.value);
+
+      // ✅ Asignar valores
+      if (iNum)   iNum.value = folio;
+      if (iFecha) iFecha.value = fecha;
+      if (iMesero) iMesero.value = mesero;
+      if (iTotal) iTotal.value = (Number.isFinite(total) ? total : 0).toFixed(2);
+
+      // ✅ Validación FUERTE (si falta total real, NO permitir registrar)
+      const okFolio = /^\d{5,7}$/.test(folio);
+      const okFecha = /^\d{4}-\d{2}-\d{2}$/.test(fecha);
+      const okTotal = Number.isFinite(total) && total > 0;
+
+      if (!okTotal) {
+        setStatus("❌ No pude detectar el TOTAL (línea 'Total 123.45'). Toma otra foto más clara del área de TOTAL.", "err");
+        msgTicket.className='validacion-msg err';
+        msgTicket.textContent="No se puede registrar sin TOTAL válido.";
+        lockInputs();
+        return;
+      }
+
+      // Mesero es opcional (si no se lee, no bloquea)
+      const meseroTxt = mesero ? ` · Mesero: ${mesero}` : "";
+      setStatus(`✓ Ticket leído. Folio: ${folio||"(sin)"} · Fecha: ${fecha||"(sin)"} · Total: $${total.toFixed(2)}${meseroTxt}`, "ok");
+
+      // ✅ LIVE EVENT: scan OK
+      try{
+        await pushLiveEvent({
+          type: "ticket_scan",
+          brand: "Applebees",
+          storeId: "APB_PASEO", // cámbialo si luego quieres por sucursal real
+          storeName: "Applebee’s Paseo Central",
+          status: "ok",
+          ticket: {
+            folio,
+            fecha,
+            total: Number(total.toFixed(2)),
+            mesero: (iMesero?.value || "").trim().toUpperCase()
+          }
+        });
+      }catch{}
+
+      // ✅ Mantener bloqueado siempre (sin teclado)
+      lockInputs();
+
+      if (okFolio && okFecha && okTotal) {
+        btnRegistrar && (btnRegistrar.disabled = false);
+      } else {
+        btnRegistrar && (btnRegistrar.disabled = true);
+      }
     } catch (e) {
-      console.warn("⚠️ No se pudo subir imagen:", e);
+      console.error("[autoProcess] Error al procesar:", e);
+      setStatus("Falló el OCR. Intenta de nuevo.", "err");
+      btnRegistrar && (btnRegistrar.disabled = true);
+      lockInputs();
     }
-
-    // ✅ EVENTO EN VIVO
-    try {
-      await pushLiveEvent({
-        type: "ticket_scan",
-        brand: "Applebees",
-        storeId: "APB_PASEO",
-        storeName: "Applebee’s Paseo Central",
-        status: "ok",
-        ticket: {
-          folio,
-          fecha,
-          total: Number(total.toFixed(2)),
-          mesero: (iMesero?.value || "").trim().toUpperCase()
-        }
-      });
-    } catch {}
-
-    lockInputs();
-
-    // ✅ ACTIVAR BOTÓN SOLO SI TODO OK
-    if (okFolio && okFecha && okTotal) {
-      if (btnRegistrar) btnRegistrar.disabled = false;
-    } else {
-      if (btnRegistrar) btnRegistrar.disabled = true;
-    }
-
-  } catch (e) {
-    console.error("[autoProcess] Error al procesar:", e);
-    setStatus("Falló el OCR. Intenta de nuevo.", "err");
-    if (btnRegistrar) btnRegistrar.disabled = true;
-    lockInputs();
   }
-}
 
   // ===== Cámara =====
   async function openCamera() {
@@ -557,7 +500,7 @@ async function uploadTicketImage(file, folio) {
 
     const folio=(iNum?.value||'').trim().toUpperCase();
     const fechaStr=(iFecha?.value||'').trim();
-    const totalNum = Number(window.lastOCRTotal || 0);
+    const totalNum=parseFloat(iTotal?.value||"0")||0;
     const mesero=(iMesero?.value||'').trim().toUpperCase();
 
     // ✅ Bloqueo fuerte: NO registrar si no hay TOTAL válido real
@@ -647,8 +590,6 @@ async function uploadTicketImage(file, folio) {
         fecha: fechaStr,
         total: totalNum,
         mesero: mesero || "",
-        imagen: window.lastTicketImage || "",
-
 
         productos: {
           "0": {
