@@ -8,6 +8,13 @@
   const auth = firebase.auth();
   const db   = firebase.database();
 
+  // 🛡️ Estado temporal para datos detectados por el OCR
+  let lastScanData = { 
+    storeId: "APB_PASEO", 
+    storeName: "Applebee’s Paseo Central",
+    auditOk: true,
+    sumaAuditoria: 0
+  };
   // ================= LIVE EVENTS (MÓDULO 1) =================
   async function pushLiveEvent(payload){
     try{
@@ -205,87 +212,122 @@
     return s.replace(/[^A-ZÁÉÍÓÚÑ\s]/gi,"").replace(/\s+/g," ").trim().toUpperCase();
   }
 
+  // ✅ NUEVO: Función para subir la imagen a Firebase Storage
+async function uploadTicketImage(file, folio) {
+  try {
+    const user = auth.currentUser;
+    if (!user) throw new Error("Usuario no autenticado");
+
+    // Crear una referencia: ticketsImages/ID_USUARIO/FOLIO_TIMESTAMP.jpg
+    const storageRef = firebase.storage().ref();
+    const safeFolio = folio || "no_folio";
+    const fileName = `${safeFolio}_${Date.now()}.jpg`;
+    const path = `ticketsImages/${user.uid}/${fileName}`;
+
+    const snapshot = await storageRef.child(path).put(file);
+    const url = await snapshot.ref.getDownloadURL();
+
+    console.log("✅ Imagen subida con éxito:", url);
+    return url;
+  } catch (err) {
+    console.error("❌ Error subiendo imagen:", err);
+    return ""; // Si falla, devolvemos vacío para no trabar el registro
+  }
+}
   async function autoProcessCurrentFile() {
     const file = fileInput?.files?.[0];
     if (!file) {
-      setStatus("Sube o toma la foto del ticket primero.", "err");
-      return;
+        setStatus("Sube o toma la foto del ticket primero.", "err");
+        return;
     }
 
     const ready = await waitForOCR();
     if (!ready) {
-      console.warn("[autoProcess] OCR no listo (processTicketWithIA no encontrada)");
-      setStatus("No se pudo iniciar el OCR. Revisa la consola.", "err");
-      return;
+        console.warn("[autoProcess] OCR no listo");
+        setStatus("No se pudo iniciar el OCR. Revisa la consola.", "err");
+        return;
     }
 
     try {
-      setStatus("🕐 Escaneando ticket…");
-      lockInputs();
-      btnRegistrar && (btnRegistrar.disabled = true);
-
-      const ret = await window.processTicketWithIA(file);
-
-      const folio  = (ret?.folio||"").toString().trim();
-      const fecha  = (ret?.fecha||"").toString().trim();
-      const total  = Number(ret?.total||0);
-      const mesero = sanitizeMesero(iMesero?.value);
-
-      // ✅ Asignar valores
-      if (iNum)   iNum.value = folio;
-      if (iFecha) iFecha.value = fecha;
-      if (iMesero) iMesero.value = mesero;
-      if (iTotal) iTotal.value = (Number.isFinite(total) ? total : 0).toFixed(2);
-
-      // ✅ Validación FUERTE (si falta total real, NO permitir registrar)
-      const okFolio = /^\d{5,7}$/.test(folio);
-      const okFecha = /^\d{4}-\d{2}-\d{2}$/.test(fecha);
-      const okTotal = Number.isFinite(total) && total > 0;
-
-      if (!okTotal) {
-        setStatus("❌ No pude detectar el TOTAL (línea 'Total 123.45'). Toma otra foto más clara del área de TOTAL.", "err");
-        msgTicket.className='validacion-msg err';
-        msgTicket.textContent="No se puede registrar sin TOTAL válido.";
+        setStatus("🕐 Escaneando ticket…");
         lockInputs();
-        return;
-      }
+        if (btnRegistrar) btnRegistrar.disabled = true;
 
-      // Mesero es opcional (si no se lee, no bloquea)
-      const meseroTxt = mesero ? ` · Mesero: ${mesero}` : "";
-      setStatus(`✓ Ticket leído. Folio: ${folio||"(sin)"} · Fecha: ${fecha||"(sin)"} · Total: $${total.toFixed(2)}${meseroTxt}`, "ok");
+        // 1. Llamada al OCR (trae auditoría y sucursal)
+        const ret = await window.processTicketWithIA(file);
 
-      // ✅ LIVE EVENT: scan OK
-      try{
-        await pushLiveEvent({
-          type: "ticket_scan",
-          brand: "Applebees",
-          storeId: "APB_PASEO", // cámbialo si luego quieres por sucursal real
-          storeName: "Applebee’s Paseo Central",
-          status: "ok",
-          ticket: {
-            folio,
-            fecha,
-            total: Number(total.toFixed(2)),
-            mesero: (iMesero?.value || "").trim().toUpperCase()
-          }
-        });
-      }catch{}
+        const folio         = (ret?.folio || "").toString().trim();
+        const fecha         = (ret?.fecha || "").toString().trim();
+        const total         = Number(ret?.total || 0);
+        const auditOk       = ret?.auditOk;       // ✅ Recibimos validación de platos
+        const sumaAuditoria = ret?.sumaAuditoria; // ✅ Recibimos suma de platos
+        const mesero        = sanitizeMesero(iMesero?.value || ret?.mesero);
 
-      // ✅ Mantener bloqueado siempre (sin teclado)
-      lockInputs();
+        // 2. 🛡️ BLINDAJE DE AUDITORÍA (Total vs Productos)
+        if (total > 0 && !auditOk) {
+            setStatus(`⚠️ Error: El Total es $${total.toFixed(2)} pero los productos suman $${sumaAuditoria.toFixed(2)}. Verifica la foto.`, "err");
+            msgTicket.className = 'validacion-msg err';
+            msgTicket.textContent = "Los montos no coinciden. Intenta una foto más clara.";
+            lockInputs();
+            return; // ❌ BLOQUEO: Detenemos aquí si no cuadra la suma
+        }
 
-      if (okFolio && okFecha && okTotal) {
-        btnRegistrar && (btnRegistrar.disabled = false);
-      } else {
-        btnRegistrar && (btnRegistrar.disabled = true);
-      }
+        // 3. Guardar datos de sucursal detectada y subir imagen
+        lastScanData.storeId = ret?.storeId || "APB_PASEO";
+        lastScanData.storeName = ret?.storeName || "Applebee’s Paseo Central";
+
+        if (total > 0) {
+            window.lastTicketImage = await uploadTicketImage(file, folio);
+        }
+
+        // 4. Asignar valores a los inputs (Visualización)
+        if (iNum)   iNum.value = folio;
+        if (iFecha) iFecha.value = fecha;
+        if (iMesero) iMesero.value = mesero;
+        if (iTotal) iTotal.value = (total > 0) ? total.toFixed(2) : "0.00";
+
+        // 5. Validación de formato de campos
+        const okFolio = /^\d{3,10}$/.test(folio);
+        const okFecha = /^\d{4}-\d{2}-\d{2}$/.test(fecha);
+        const okTotal = total > 0;
+
+        if (!okTotal) {
+            setStatus("❌ No se detectó el TOTAL. Toma otra foto clara del área de total.", "err");
+            msgTicket.className = 'validacion-msg err';
+            msgTicket.textContent = "No se puede registrar sin TOTAL válido.";
+            return;
+        }
+
+        // 6. ÉXITO: Ticket verificado y cuadrado
+        const meseroTxt = mesero ? ` · Mesero: ${mesero}` : "";
+        setStatus(`✓ Ticket verificado en ${lastScanData.storeName}${meseroTxt}`, "ok");
+        msgTicket.className = 'validacion-msg ok';
+        msgTicket.textContent = "Ticket verificado correctamente.";
+
+        // 7. EVENTO EN VIVO (Con la sucursal real detectada)
+        try {
+            await pushLiveEvent({
+                type: "ticket_scan",
+                status: "ok",
+                storeId: lastScanData.storeId,
+                storeName: lastScanData.storeName,
+                ticket: { folio, fecha, total, mesero }
+            });
+        } catch {}
+
+        lockInputs();
+
+        // 8. Activar botón solo si todo es perfecto
+        if (okFolio && okFecha && okTotal && auditOk) {
+            if (btnRegistrar) btnRegistrar.disabled = false;
+        }
+
     } catch (e) {
-      console.error("[autoProcess] Error al procesar:", e);
-      setStatus("Falló el OCR. Intenta de nuevo.", "err");
-      btnRegistrar && (btnRegistrar.disabled = true);
-      lockInputs();
+        console.error("[autoProcess] Error:", e);
+        setStatus("Falló el OCR. Intenta de nuevo.", "err");
+        if (btnRegistrar) btnRegistrar.disabled = true;
     }
-  }
+}
 
   // ===== Cámara =====
   async function openCamera() {
@@ -528,18 +570,22 @@
           msgTicket.className='validacion-msg err';
           msgTicket.textContent=`⚠️ Ya registraste ${DAY_LIMIT} tickets hoy.`;
 
-          // ✅ LIVE EVENT: bloqueado por límite diario
-          try{
+          try {
             await pushLiveEvent({
-              type: "ticket_blocked",
+              type: "ticket_registered",
               brand: "Applebees",
-              storeId: "APB_PASEO",
-              storeName: "Applebee’s Paseo Central",
-              status: "warn",
-              reason: "day_limit_exceeded",
-              ticket: { folio, fecha: fechaStr, total: totalNum, mesero }
+              storeId: lastScanData.storeId,     // Usa la sucursal detectada
+              storeName: lastScanData.storeName, // Usa el nombre detectado
+              status: "ok",
+              ticket: { 
+                folio, 
+                fecha: fechaStr, 
+                total: totalNum, 
+                mesero,
+                monederoAbonado: monedero // Añadimos cuánto ganó para el monitor
+              }
             });
-          }catch{}
+          } catch {}
 
           return;
         }
@@ -575,11 +621,19 @@
         if (curr) return;
         return { uid:user.uid, folio, fecha:fechaStr, total:totalNum, totalCents, createdAt:Date.now() };
       });
-      if (!idxTx.committed){
-        msgTicket.className='validacion-msg err';
-        msgTicket.textContent = "❌ Este ticket (mismo folio, fecha y monto) ya fue registrado.";
-        return;
-      }
+      if (!idxTx.committed) {
+      msgTicket.className = 'validacion-msg err';
+      msgTicket.textContent = "❌ Este ticket ya fue registrado.";
+      
+      // ✅ ENVIAR ALERTA AL MONITOR EN VIVO
+      await pushLiveEvent({
+        type: "fraud_attempt",
+        status: "err",
+        reason: "duplicate_ticket",
+        ticket: { folio, fecha: fechaStr, total: totalNum }
+      });
+      return;
+    }
 
       const res = await ticketRef.transaction(current=>{
       if (current) return;
@@ -590,6 +644,10 @@
         fecha: fechaStr,
         total: totalNum,
         mesero: mesero || "",
+        imagen: window.lastTicketImage || "",
+        sucursalId: lastScanData.storeId,     // ✅ Guarda la detectada por OCR
+        sucursalName: lastScanData.storeName, // ✅ Guarda la detectada por OCR
+        // ... puntos y lo demás sigue igual
 
         productos: {
           "0": {
