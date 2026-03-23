@@ -8,6 +8,10 @@
   const auth = firebase.auth();
   const db   = firebase.database();
 
+  // 👇 AQUÍ ES DONDE DEBES PEGAR LAS LÍNEAS NUEVAS:
+  let scanAttempts = 0;   // ✅ Contador de intentos globales
+  const MAX_ATTEMPTS = 3; // ✅ Límite permitido
+
   // 🛡️ Estado temporal para datos detectados por el OCR
   let lastScanData = { 
     storeId: "APB_PASEO", 
@@ -243,89 +247,77 @@ async function uploadTicketImage(file, folio) {
 
     const ready = await waitForOCR();
     if (!ready) {
-        console.warn("[autoProcess] OCR no listo");
-        setStatus("No se pudo iniciar el OCR. Revisa la consola.", "err");
+        setStatus("No se pudo iniciar el OCR.", "err");
         return;
     }
 
     try {
-        setStatus("🕐 Escaneando ticket…");
+        setStatus(`🕐 Analizando ticket (Intento ${scanAttempts + 1} de ${MAX_ATTEMPTS})…`);
         lockInputs();
         if (btnRegistrar) btnRegistrar.disabled = true;
 
-        // 1. Llamada al OCR (trae auditoría y sucursal)
         const ret = await window.processTicketWithIA(file);
 
-        const folio         = (ret?.folio || "").toString().trim();
-        const fecha         = (ret?.fecha || "").toString().trim();
-        const total         = Number(ret?.total || 0);
-        const auditOk       = ret?.auditOk;       // ✅ Recibimos validación de platos
-        const sumaAuditoria = ret?.sumaAuditoria; // ✅ Recibimos suma de platos
-        const mesero        = sanitizeMesero(iMesero?.value || ret?.mesero);
+        // ✅ REGLA DE ORO: ¿Se leyó TODO bien (Folio, Fecha, Total y Auditoría)?
+        const dataComplete = (ret.folio && ret.fecha && ret.total > 0 && ret.auditOk);
 
-        // 2. 🛡️ BLINDAJE DE AUDITORÍA (Total vs Productos)
-        if (total > 0 && !auditOk) {
-            setStatus(`⚠️ Error: El Total es $${total.toFixed(2)} pero los productos suman $${sumaAuditoria.toFixed(2)}. Verifica la foto.`, "err");
-            msgTicket.className = 'validacion-msg err';
-            msgTicket.textContent = "Los montos no coinciden. Intenta una foto más clara.";
-            lockInputs();
-            return; // ❌ BLOQUEO: Detenemos aquí si no cuadra la suma
+        if (!dataComplete) {
+            scanAttempts++;
+            
+            if (scanAttempts >= MAX_ATTEMPTS) {
+                // 🚫 BLOQUEO TOTAL POR SEGURIDAD
+                setStatus("⛔ ESCANEO INVALIDADO", "err");
+                msgTicket.className = 'validacion-msg err';
+                msgTicket.innerHTML = `<strong>Ticket Invalido:</strong> Has fallado ${MAX_ATTEMPTS} veces al tomar la foto. Por seguridad, este ticket no puede procesarse más. Asegúrate de tener buena luz y que el proceso sea preciso.`;
+                
+                if (btnRegistrar) btnRegistrar.disabled = true;
+                if (btnCam) btnCam.disabled = true;
+                if (btnPickFile) btnPickFile.disabled = true;
+
+                await pushLiveEvent({
+                    type: "ticket_blocked_bad_quality",
+                    status: "err",
+                    reason: "max_attempts_exceeded",
+                    ticket: { folio: ret.folio || "unknown" }
+                });
+                return;
+            } else {
+                setStatus(`❌ Intento ${scanAttempts} fallido. Foto borrosa o incompleta. Intenta de nuevo.`, "err");
+                unlockInputs(); // Permitir que intente de nuevo
+                return;
+            }
         }
 
-        // 3. Guardar datos de sucursal detectada y subir imagen
+        // Si llegó aquí, los datos son perfectos. Reiniciamos intentos.
+        scanAttempts = 0; 
+        
+        // Guardar sucursal y subir imagen
         lastScanData.storeId = ret?.storeId || "APB_PASEO";
         lastScanData.storeName = ret?.storeName || "Applebee’s Paseo Central";
+        window.lastTicketImage = await uploadTicketImage(file, ret.folio);
 
-        if (total > 0) {
-            window.lastTicketImage = await uploadTicketImage(file, folio);
-        }
+        // Llenar campos visuales
+        if (iNum)   iNum.value = ret.folio;
+        if (iFecha) iFecha.value = ret.fecha;
+        if (iMesero) iMesero.value = sanitizeMesero(iMesero.value || ret.mesero);
+        if (iTotal) iTotal.value = ret.total.toFixed(2);
 
-        // 4. Asignar valores a los inputs (Visualización)
-        if (iNum)   iNum.value = folio;
-        if (iFecha) iFecha.value = fecha;
-        if (iMesero) iMesero.value = mesero;
-        if (iTotal) iTotal.value = (total > 0) ? total.toFixed(2) : "0.00";
-
-        // 5. Validación de formato de campos
-        const okFolio = /^\d{3,10}$/.test(folio);
-        const okFecha = /^\d{4}-\d{2}-\d{2}$/.test(fecha);
-        const okTotal = total > 0;
-
-        if (!okTotal) {
-            setStatus("❌ No se detectó el TOTAL. Toma otra foto clara del área de total.", "err");
-            msgTicket.className = 'validacion-msg err';
-            msgTicket.textContent = "No se puede registrar sin TOTAL válido.";
-            return;
-        }
-
-        // 6. ÉXITO: Ticket verificado y cuadrado
-        const meseroTxt = mesero ? ` · Mesero: ${mesero}` : "";
-        setStatus(`✓ Ticket verificado en ${lastScanData.storeName}${meseroTxt}`, "ok");
+        setStatus(`✓ Ticket verificado en ${lastScanData.storeName}`, "ok");
         msgTicket.className = 'validacion-msg ok';
-        msgTicket.textContent = "Ticket verificado correctamente.";
+        msgTicket.textContent = "Datos listos para registrar.";
 
-        // 7. EVENTO EN VIVO (Con la sucursal real detectada)
-        try {
-            await pushLiveEvent({
-                type: "ticket_scan",
-                status: "ok",
-                storeId: lastScanData.storeId,
-                storeName: lastScanData.storeName,
-                ticket: { folio, fecha, total, mesero }
-            });
-        } catch {}
+        await pushLiveEvent({
+            type: "ticket_scan_success",
+            status: "ok",
+            storeId: lastScanData.storeId,
+            ticket: { folio: ret.folio, total: ret.total }
+        });
 
-        lockInputs();
-
-        // 8. Activar botón solo si todo es perfecto
-        if (okFolio && okFecha && okTotal && auditOk) {
-            if (btnRegistrar) btnRegistrar.disabled = false;
-        }
+        if (btnRegistrar) btnRegistrar.disabled = false;
 
     } catch (e) {
-        console.error("[autoProcess] Error:", e);
-        setStatus("Falló el OCR. Intenta de nuevo.", "err");
-        if (btnRegistrar) btnRegistrar.disabled = true;
+        console.error("Error OCR:", e);
+        setStatus("Error al procesar. Intenta una foto más clara.", "err");
     }
 }
 
@@ -369,21 +361,38 @@ async function uploadTicketImage(file, folio) {
     modal.style.display='none'; modal.setAttribute('aria-hidden','true');
   }
 
-  async function captureFrame(){
-    const w=video.videoWidth, h=video.videoHeight;
-    if (!w||!h){ setStatus("Cámara aún no lista. Intenta de nuevo.","err"); return; }
-    const c=document.createElement('canvas'); c.width=w; c.height=h;
-    const ctx = c.getContext('2d');
-    ctx.filter = "contrast(1.15) brightness(1.05) saturate(1.05)";
-    ctx.drawImage(video,0,0,w,h);
-    stopCamera();
-    const dataURL=c.toDataURL("image/jpeg",.95);
-    const blob=dataURLtoBlob(dataURL);
-    setFileInputFromBlob(blob,`ticket_${Date.now()}.jpg`);
-    setStatus("📎 Foto capturada. Procesando OCR…","ok");
-    await autoProcessCurrentFile();
-  }
+ async function captureFrame() {
+    const w = video.videoWidth;
+    const h = video.videoHeight;
+    
+    // ✅ VALIDACIÓN DE PÍXELES (Mínimo HD para garantizar lectura de letras pequeñas)
+    if (w < 1280 || h < 720) {
+        setStatus("❌ Calidad insuficiente. Usa la cámara trasera y enfoca bien el ticket.", "err");
+        return;
+    }
 
+    if (!w || !h) { 
+        setStatus("Cámara aún no lista. Intenta de nuevo.", "err"); 
+        return; 
+    }
+    
+    const c = document.createElement('canvas'); 
+    c.width = w; c.height = h;
+    const ctx = c.getContext('2d');
+    
+    // Mejoramos nitidez en la captura base
+    ctx.filter = "contrast(1.20) brightness(1.02)";
+    ctx.drawImage(video, 0, 0, w, h);
+    
+    stopCamera();
+    
+    const dataURL = c.toDataURL("image/jpeg", 0.95);
+    const blob = dataURLtoBlob(dataURL);
+    setFileInputFromBlob(blob, `ticket_${Date.now()}.jpg`);
+    
+    setStatus("📎 Foto capturada. Analizando calidad…", "ok");
+    await autoProcessCurrentFile();
+}
   btnCam?.addEventListener('click', openCamera);
   btnClose?.addEventListener('click', stopCamera);
   btnShot?.addEventListener('click', captureFrame);
