@@ -313,15 +313,19 @@ async function preprocessImage(file) {
   let w = bmp.width, h = bmp.height, rotate = false;
   if (w > h * 1.6) rotate = true;
 
-  const targetH = 2800;
-  const scale = Math.max(1.4, Math.min(3.2, targetH / (rotate ? w : h)));
+  // ✅ Aumentamos el tamaño objetivo a 3500px para que las letras pequeñas del ticket se vean gigantes
+  const targetH = 3500;
+  const scale = Math.max(1.5, Math.min(4.0, targetH / (rotate ? w : h)));
 
   const c = document.createElement("canvas");
   if (rotate) { c.width = Math.round(h * scale); c.height = Math.round(w * scale); }
   else { c.width = Math.round(w * scale); c.height = Math.round(h * scale); }
 
   const ctx = c.getContext("2d");
-  ctx.filter = "grayscale(1) contrast(1.35) brightness(1.05)";
+  
+  // ✅ Filtro de "Súper Contraste" para tickets térmicos blancos y negros
+  ctx.filter = "grayscale(1) contrast(2.5) brightness(1.10)";
+  
   if (rotate) {
     ctx.translate(c.width / 2, c.height / 2);
     ctx.rotate(Math.PI / 2);
@@ -330,18 +334,18 @@ async function preprocessImage(file) {
     ctx.drawImage(bmp, 0, 0, c.width, c.height);
   }
 
+  // Si tienes OpenCV (cv), el Adaptive Threshold hará el resto
   if (typeof cv !== "undefined" && cv?.Mat) {
     try {
       let src = cv.imread(c);
       let gray = new cv.Mat();
       cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
       let bw = new cv.Mat();
-      cv.adaptiveThreshold(gray, bw, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 35, 5);
+      // Umbral adaptativo para limpiar sombras de la foto
+      cv.adaptiveThreshold(gray, bw, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 45, 7);
       cv.imshow(c, bw);
       src.delete(); gray.delete(); bw.delete();
-    } catch (e) {
-      console.warn("OpenCV preprocess falló:", e);
-    }
+    } catch (e) { console.warn("OpenCV falló:", e); }
   }
   return c;
 }
