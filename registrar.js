@@ -365,9 +365,14 @@ async function uploadTicketImage(file, folio) {
     const w = video.videoWidth;
     const h = video.videoHeight;
     
-    // ✅ VALIDACIÓN DE PÍXELES (Mínimo HD para garantizar lectura de letras pequeñas)
-    if (w < 1280 || h < 720) {
-        setStatus("❌ Calidad insuficiente. Usa la cámara trasera y enfoca bien el ticket.", "err");
+    // 💡 Esto nos dirá en la consola qué resolución está detectando tu móvil
+    console.log(`[Cámara] Resolución detectada: ${w}x${h}`);
+
+    // ✅ Bajamos el umbral a 720p (HD estándar) para ser más flexibles
+    // Antes pedíamos 1280x720, ahora permitimos un poco menos por si el sensor recorta bordes
+    if (w < 960 || h < 540) { 
+        setStatus(`❌ Calidad insuficiente (${w}x${h}). Enfoca mejor el ticket.`, "err");
+        // No cerramos la cámara automáticamente para que el usuario pueda reintentar sin reabrir
         return;
     }
 
@@ -380,17 +385,18 @@ async function uploadTicketImage(file, folio) {
     c.width = w; c.height = h;
     const ctx = c.getContext('2d');
     
-    // Mejoramos nitidez en la captura base
-    ctx.filter = "contrast(1.20) brightness(1.02)";
+    // Aplicamos un poco de nitidez
+    ctx.filter = "contrast(1.15) brightness(1.02)";
     ctx.drawImage(video, 0, 0, w, h);
     
+    // Detenemos la cámara hasta después de capturar
     stopCamera();
     
-    const dataURL = c.toDataURL("image/jpeg", 0.95);
+    const dataURL = c.toDataURL("image/jpeg", 0.92);
     const blob = dataURLtoBlob(dataURL);
     setFileInputFromBlob(blob, `ticket_${Date.now()}.jpg`);
     
-    setStatus("📎 Foto capturada. Analizando calidad…", "ok");
+    setStatus("📎 Foto capturada. Analizando...", "ok");
     await autoProcessCurrentFile();
 }
   btnCam?.addEventListener('click', openCamera);
