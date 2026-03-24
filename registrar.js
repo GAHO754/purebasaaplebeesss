@@ -54,8 +54,6 @@
       return "";
     }
   }
-  // ===========================================================
-
   // ===== UI =====
   const fileInput    = $('ticketFile');
   const dropzone     = $('dropzone');
@@ -238,7 +236,8 @@ async function uploadTicketImage(file, folio) {
     return ""; // Si falla, devolvemos vacío para no trabar el registro
   }
 }
-  async function autoProcessCurrentFile() {
+ 
+async function autoProcessCurrentFile() {
     const file = fileInput?.files?.[0];
     if (!file) {
         setStatus("Sube o toma la foto del ticket primero.", "err");
@@ -256,19 +255,28 @@ async function uploadTicketImage(file, folio) {
         lockInputs();
         if (btnRegistrar) btnRegistrar.disabled = true;
 
+        // 1. Llamada al OCR y Auditoría de IA
         const ret = await window.processTicketWithIA(file);
 
-        // ✅ REGLA DE ORO: ¿Se leyó TODO bien (Folio, Fecha, Total y Auditoría)?
+        // 🛡️ FILTRO DE CALIDAD CRÍTICA (RECHAZO DE GEMINI)
+        if (ret.error === "low_quality") {
+            setStatus("❌ Foto borrosa o ilegible.", "err");
+            msgTicket.className = 'validacion-msg err';
+            msgTicket.textContent = "La IA no puede asegurar los montos. Intenta con más luz y un ángulo recto.";
+            unlockInputs(); 
+            return; 
+        }
+
+        // 2. REGLA DE ORO: ¿Se leyó TODO bien (Folio, Fecha, Total y Auditoría)?
         const dataComplete = (ret.folio && ret.fecha && ret.total > 0 && ret.auditOk);
 
         if (!dataComplete) {
             scanAttempts++;
             
             if (scanAttempts >= MAX_ATTEMPTS) {
-                // 🚫 BLOQUEO TOTAL POR SEGURIDAD
                 setStatus("⛔ ESCANEO INVALIDADO", "err");
                 msgTicket.className = 'validacion-msg err';
-                msgTicket.innerHTML = `<strong>Ticket Invalido:</strong> Has fallado ${MAX_ATTEMPTS} veces al tomar la foto. Por seguridad, este ticket no puede procesarse más. Asegúrate de tener buena luz y que el proceso sea preciso.`;
+                msgTicket.innerHTML = `<strong>Ticket Inválido:</strong> Has fallado ${MAX_ATTEMPTS} veces. Por seguridad, este ticket se ha bloqueado.`;
                 
                 if (btnRegistrar) btnRegistrar.disabled = true;
                 if (btnCam) btnCam.disabled = true;
@@ -282,29 +290,39 @@ async function uploadTicketImage(file, folio) {
                 });
                 return;
             } else {
-                setStatus(`❌ Intento ${scanAttempts} fallido. Foto borrosa o incompleta. Intenta de nuevo.`, "err");
-                unlockInputs(); // Permitir que intente de nuevo
+                setStatus(`❌ Intento ${scanAttempts} fallido. Datos incompletos o erróneos.`, "err");
+                unlockInputs(); 
                 return;
             }
         }
 
-        // Si llegó aquí, los datos son perfectos. Reiniciamos intentos.
+        // 🛡️ NUEVO: ALERTA DE MONTO SOSPECHOSAMENTE BAJO (EJ. EL IVA)
+        // Si el total es menor a $100 pero mayor a 0, avisamos al usuario para que verifique
+        if (ret.total < 100 && ret.total > 0) {
+            setStatus("⚠️ Monto detectado muy bajo ($" + ret.total.toFixed(2) + "). ¿Es correcto?", "warn");
+            // No bloqueamos el proceso, pero forzamos un mensaje visual de advertencia
+            msgTicket.className = 'validacion-msg warn';
+            msgTicket.textContent = "Revisa si el total es correcto. Si detectó el IVA en lugar del Total, intenta otra foto.";
+        } else {
+            setStatus(`✓ Ticket verificado en ${ret.storeName || 'Applebee’s'}`, "ok");
+            msgTicket.className = 'validacion-msg ok';
+            msgTicket.textContent = "Datos listos para registrar.";
+        }
+
+        // 3. ÉXITO: Los datos pasaron los filtros
         scanAttempts = 0; 
         
-        // Guardar sucursal y subir imagen
         lastScanData.storeId = ret?.storeId || "APB_PASEO";
         lastScanData.storeName = ret?.storeName || "Applebee’s Paseo Central";
+        window.lastDetectedTotal = ret.total; // 🛡️ Caja fuerte para comparar en el registro final
+        
         window.lastTicketImage = await uploadTicketImage(file, ret.folio);
 
         // Llenar campos visuales
         if (iNum)   iNum.value = ret.folio;
         if (iFecha) iFecha.value = ret.fecha;
-        if (iMesero) iMesero.value = sanitizeMesero(iMesero.value || ret.mesero);
+        if (iMesero) iMesero.value = (ret.mesero || "").toUpperCase();
         if (iTotal) iTotal.value = ret.total.toFixed(2);
-
-        setStatus(`✓ Ticket verificado en ${lastScanData.storeName}`, "ok");
-        msgTicket.className = 'validacion-msg ok';
-        msgTicket.textContent = "Datos listos para registrar.";
 
         await pushLiveEvent({
             type: "ticket_scan_success",
@@ -318,6 +336,7 @@ async function uploadTicketImage(file, folio) {
     } catch (e) {
         console.error("Error OCR:", e);
         setStatus("Error al procesar. Intenta una foto más clara.", "err");
+        unlockInputs();
     }
 }
 
@@ -546,101 +565,91 @@ async function uploadTicketImage(file, folio) {
     return Date.now() > exp.getTime();
   }
 
-  async function registrarTicketRTDB(){
-      const user = auth.currentUser;
+async function registrarTicketRTDB() {
+  const user = auth.currentUser;
 
-    if (!user || !user.uid){
-      msgTicket.className='validacion-msg err';
-      msgTicket.textContent="Sesión no lista. Intenta de nuevo.";
-      return;
-    }
+  // 1. Verificación inicial de sesión
+  if (!user || !user.uid) {
+    msgTicket.className = 'validacion-msg err';
+    msgTicket.textContent = "Sesión no lista. Intenta de nuevo.";
+    return;
+  }
 
-    const folio=(iNum?.value||'').trim().toUpperCase();
-    const fechaStr=(iFecha?.value||'').trim();
-    const totalNum=parseFloat(iTotal?.value||"0")||0;
-    const mesero=(iMesero?.value||'').trim().toUpperCase();
+  // 2. Captura y Limpieza de datos
+  const folio = (iNum?.value || '').trim().toUpperCase();
+  const fechaStr = (iFecha?.value || '').trim();
+  const totalNum = parseFloat(iTotal?.value || "0") || 0;
+  const mesero = (iMesero?.value || '').trim().toUpperCase();
 
-    // ✅ Bloqueo fuerte: NO registrar si no hay TOTAL válido real
-    if (!/^\d{5,7}$/.test(folio) || !/^\d{4}-\d{2}-\d{2}$/.test(fechaStr) || !(totalNum>0)){
-      msgTicket.className='validacion-msg err';
-      msgTicket.textContent="Faltan datos válidos (folio/fecha/total). Toma otra foto clara del TOTAL.";
-      return;
-    }
+  // 🛡️ DOBLE VERIFICACIÓN DE SEGURIDAD (Blindaje contra edición manual)
+  // Comparamos lo que el usuario quiere registrar contra lo que el OCR leyó
+  const totalOriginalOCR = window.lastDetectedTotal || 0;
+  if (totalOriginalOCR > 0 && totalNum > (totalOriginalOCR + 1.00)) {
+    msgTicket.className = 'validacion-msg err';
+    msgTicket.textContent = "🚨 El total ingresado no coincide con la imagen. Registro bloqueado.";
+    
+    await pushLiveEvent({
+      type: "fraud_warning",
+      status: "warn",
+      reason: "manual_total_inflation",
+      ticket: { folio, totalUsuario: totalNum, totalRealOCR: totalOriginalOCR }
+    });
+    return;
+  }
 
-    // ✅ Nuevo: validar vencimiento de registro (3 días)
-    if (isTicketExpiredByDate(fechaStr)){
-      msgTicket.className='validacion-msg err';
-      msgTicket.textContent=`⛔ Ticket vencido. Solo puedes registrar tu consumo dentro de ${REGISTER_DAYS_LIMIT} días a partir de la fecha del ticket.`;
-      return;
-    }
+  // 3. Validaciones de Formato y Reglas de Negocio
+  if (!/^\d{4,10}$/.test(folio) || !/^\d{4}-\d{2}-\d{2}$/.test(fechaStr) || totalNum <= 0) {
+    msgTicket.className = 'validacion-msg err';
+    msgTicket.textContent = "Faltan datos válidos. Toma otra foto clara donde se vea el FOLIO y el TOTAL.";
+    return;
+  }
 
-    // Límite por día
-    if (DAY_LIMIT>0){
-      try{
-        const {start,end}=startEndOfToday();
-        const qs=db.ref(`users/${user.uid}/tickets`).orderByChild('createdAt').startAt(start).endAt(end);
-        const snap=await qs.once('value');
-        const countToday=snap.exists()?Object.keys(snap.val()).length:0;
-        if (countToday>=DAY_LIMIT){
-          msgTicket.className='validacion-msg err';
-          msgTicket.textContent=`⚠️ Ya registraste ${DAY_LIMIT} tickets hoy.`;
+  if (isTicketExpiredByDate(fechaStr)) {
+    msgTicket.className = 'validacion-msg err';
+    msgTicket.textContent = `⛔ Ticket vencido. Límite de registro: ${REGISTER_DAYS_LIMIT} días.`;
+    return;
+  }
 
-          try {
-            await pushLiveEvent({
-              type: "ticket_registered",
-              brand: "Applebees",
-              storeId: lastScanData.storeId,     // Usa la sucursal detectada
-              storeName: lastScanData.storeName, // Usa el nombre detectado
-              status: "ok",
-              ticket: { 
-                folio, 
-                fecha: fechaStr, 
-                total: totalNum, 
-                mesero,
-                monederoAbonado: monedero // Añadimos cuánto ganó para el monitor
-              }
-            });
-          } catch {}
-
-          return;
-        }
-      }catch(err){ console.warn('No pude verificar límite diario:',err); }
-    }
-
-    const { ymd, totalCents, indexKey, ticketId } = buildTicketKeys(fechaStr, folio, totalNum);
-
-    // ✅ Nuevo: monedero 5%
-    const monedero = computeMonederoFromTotal(totalNum); // decimal
-
-    const fecha=new Date(`${fechaStr}T00:00:00`);
-    const vencePuntos=addMonths(fecha, Math.round(VENCE_DIAS/30)); // mismo comportamiento (aprox 6 meses)
-
-   
-
-    const userRef   = db.ref(`users/${user.uid}`);
-    const ticketRef = userRef.child(`tickets/${ticketId}`);
-    const pointsRef = userRef.child('points');
-    const indexRef  = db.ref(`ticketsIndex/${ymd}/${indexKey}`);
-
-    console.log("📦 DATA A GUARDAR:", {
-    folio,
-    fecha: fechaStr,
-    total: totalNum,
-    mesero,
-    monedero
-  });
-
-
-    try{
-      const idxTx = await indexRef.transaction(curr=>{
-        if (curr) return;
-        return { uid:user.uid, folio, fecha:fechaStr, total:totalNum, totalCents, createdAt:Date.now() };
-      });
-      if (!idxTx.committed) {
+  // 4. Verificación de Límite Diario
+  try {
+    const { start, end } = startEndOfToday();
+    const snap = await db.ref(`users/${user.uid}/tickets`)
+      .orderByChild('createdAt')
+      .startAt(start)
+      .endAt(end)
+      .once('value');
+    
+    const countToday = snap.exists() ? Object.keys(snap.val()).length : 0;
+    if (countToday >= DAY_LIMIT) {
       msgTicket.className = 'validacion-msg err';
-      msgTicket.textContent = "❌ Este ticket ya fue registrado.";
-      
-      // ✅ ENVIAR ALERTA AL MONITOR EN VIVO
+      msgTicket.textContent = `⚠️ Límite alcanzado: solo ${DAY_LIMIT} tickets por día.`;
+      return;
+    }
+  } catch (err) {
+    console.warn('Error verificando límites:', err);
+  }
+
+  // 5. Preparación de Keys y Monedero
+  const { ymd, totalCents, indexKey, ticketId } = buildTicketKeys(fechaStr, folio, totalNum);
+  const monedero = computeMonederoFromTotal(totalNum);
+  const fechaObj = new Date(`${fechaStr}T00:00:00`);
+  const vencePuntos = addMonths(fechaObj, Math.round(VENCE_DIAS / 30));
+
+  const userRef = db.ref(`users/${user.uid}`);
+  const ticketRef = userRef.child(`tickets/${ticketId}`);
+  const pointsRef = userRef.child('points');
+  const indexRef = db.ref(`ticketsIndex/${ymd}/${indexKey}`);
+
+  try {
+    // A. TRANSACCIÓN DE ÍNDICE (Evita que dos personas registren el mismo ticket)
+    const idxTx = await indexRef.transaction(curr => {
+      if (curr) return; // Ya existe
+      return { uid: user.uid, folio, total: totalNum, createdAt: Date.now() };
+    });
+
+    if (!idxTx.committed) {
+      msgTicket.className = 'validacion-msg err';
+      msgTicket.textContent = "❌ Este ticket ya fue registrado anteriormente.";
       await pushLiveEvent({
         type: "fraud_attempt",
         status: "err",
@@ -650,91 +659,56 @@ async function uploadTicketImage(file, folio) {
       return;
     }
 
-      const res = await ticketRef.transaction(current=>{
+    // B. TRANSACCIÓN DE TICKET (Guarda el registro en el perfil del usuario)
+    const res = await ticketRef.transaction(current => {
       if (current) return;
-
-      const dataToSave = {
+      return {
         id: ticketId,
         folio,
         fecha: fechaStr,
         total: totalNum,
-        mesero: mesero || "",
+        mesero: mesero || "NO DETECTADO",
         imagen: window.lastTicketImage || "",
-        sucursalId: lastScanData.storeId,     // ✅ Guarda la detectada por OCR
-        sucursalName: lastScanData.storeName, // ✅ Guarda la detectada por OCR
-        // ... puntos y lo demás sigue igual
-
-        productos: {
-          "0": {
-            nombre: "Consumo",
-            cantidad: 1,
-            puntos_unitarios: Math.min(15, Math.max(1, Math.round(monedero)))
-          }
-        },
-
-        puntos: {
-          total: monedero,
-          detalle: {
-            "0": {
-              producto: "Consumo",
-              cantidad: 1,
-              puntos_unitarios: Math.min(15, Math.max(1, Math.round(monedero))),
-              puntos_subtotal: Math.min(15, Math.max(1, Math.round(monedero)))
-            }
-          }
-        },
-
+        sucursalId: lastScanData.storeId || "DESCONOCIDA",
+        sucursalName: lastScanData.storeName || "Applebee's",
         puntosTotal: monedero,
         points: monedero,
-
         vencePuntos: vencePuntos.getTime(),
         createdAt: Date.now()
       };
+    });
 
-      console.log("🚀 INTENTANDO GUARDAR:", dataToSave);
-
-      return dataToSave;
-
-      });
-      if (!res.committed){
-        msgTicket.className='validacion-msg err';
-        msgTicket.textContent="❌ Ya tienes un registro con ese folio y fecha.";
-        return;
-      }
-
-      // ✅ Sumar monedero al saldo del usuario (con 2 decimales)
-      await pointsRef.transaction(curr => {
-        const next = round2(Number(curr||0) + monedero);
-        return next;
-      });
-
-      // ✅ LIVE EVENT: ticket registrado OK
-      try{
-        await pushLiveEvent({
-          type: "ticket_registered",
-          brand: "Applebees",
-          storeId: "APB_PASEO",
-          storeName: "Applebee’s Paseo Central",
-          status: "ok",
-          ticket: { folio, fecha: fechaStr, total: totalNum, mesero }
-        });
-      }catch{}
-
-      msgTicket.className='validacion-msg ok';
-      msgTicket.textContent=`✅ Ticket registrado con éxito. Se abonó ${fmtMoney(monedero)} (5%) a tu monedero electrónico.`;
-      setTimeout(()=>{ window.location.href='panel.html'; }, 900);
-      }catch(e){
-      console.error("🔥 ERROR COMPLETO:", e.code, e.message, e);
-
-      msgTicket.className='validacion-msg err';
-
-      if (e.code === "PERMISSION_DENIED" || String(e).includes('Permission denied')){
-        msgTicket.textContent="Permiso denegado por Realtime Database. Revisa las reglas.";
-      }else{
-        msgTicket.textContent="No se pudo registrar el ticket. Revisa tu conexión e inténtalo de nuevo.";
-      }
+    if (!res.committed) {
+      msgTicket.className = 'validacion-msg err';
+      msgTicket.textContent = "❌ Error al guardar el ticket. Reintenta.";
+      return;
     }
+
+    // C. ACTUALIZACIÓN DE SALDO (Abono al monedero)
+    await pointsRef.transaction(curr => round2(Number(curr || 0) + monedero));
+
+    // D. EVENTO EN VIVO FINAL
+    await pushLiveEvent({
+      type: "ticket_registered",
+      brand: "Applebee's",
+      storeId: lastScanData.storeId,
+      storeName: lastScanData.storeName,
+      status: "ok",
+      ticket: { folio, fecha: fechaStr, total: totalNum, mesero, abono: monedero }
+    });
+
+    // E. ÉXITO Y REDIRECCIÓN
+    msgTicket.className = 'validacion-msg ok';
+    msgTicket.textContent = `✅ ¡Éxito! Abonamos ${fmtMoney(monedero)} a tu cuenta.`;
+    
+    setTimeout(() => { window.location.href = 'panel.html'; }, 1500);
+
+  } catch (e) {
+    console.error("🔥 Error crítico:", e);
+    msgTicket.className = 'validacion-msg err';
+    msgTicket.textContent = "Error de conexión. El ticket no se registró.";
   }
+}
 
   auth.onAuthStateChanged(user=>{
     unsub.forEach(fn=>{ try{fn();}catch{} });
