@@ -80,41 +80,82 @@ function normalizeNum(raw) {
   return Math.round((n + Number.EPSILON) * 100) / 100;
 }
 function extractDateISO(text) {
-  const m = String(text || "").match(/(\d{1,2})[\/\-.](\d{1,2})[\/\-.](20\d{2})/);
+  const m = String(text || "").match(/(\d{1,2})[\/\-.](\d{1,2})[\/\-.](202\d)/);
   if (!m) return "";
+  
   let d = +m[1], mo = +m[2], y = +m[3];
-  if (d <= 12 && mo > 12) [d, mo] = [mo, d];
-  const iso = `${y}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-  dbgNote(`Fecha detectada: ${iso}`);
-  return iso;
+  // Si el formato es DD/MM/YYYY y el OCR los voltea:
+  if (mo > 12) [d, mo] = [mo, d];
+
+  const fechaDetectada = new Date(y, mo - 1, d);
+  const hoy = new Date();
+
+  // Si la fecha detectada es mayor a hoy, probablemente el OCR leyó mal el año
+  if (fechaDetectada > hoy) {
+    dbgNote("Fecha futura detectada, usando fecha actual.");
+    return hoy.toISOString().split('T')[0];
+  }
+
+  return `${y}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
 }
 
 function extractFolio(lines) {
   const isDate = (s) => /(\d{1,2})[\/\-.](\d{1,2})[\/\-.](20\d{2})/.test(s);
   const isTime = (s) => /(\d{1,2}):(\d{2})\s*(am|pm)?/i.test(s);
-  const iD = lines.findIndex(isDate);
+  
+  // 1. Buscamos específicamente el índice de la HORA (Anclaje crítico)
   const iT = lines.findIndex(isTime);
-  const iM = lines.findIndex((s) => /\bmesero\b|\bmesa\b|\bclientes?\b/i.test(s));
-  const anchor = (iD >= 0 || iT >= 0) ? Math.max(iD, iT) : -1;
-  const from = Math.max(iM >= 0 ? iM : 0, anchor >= 0 ? anchor : 0);
-  const to = Math.min(lines.length - 1, from + 6);
-
-  const pick5 = (s) => {
-    if (/cp\s*\d{5}/i.test(s)) return null;
-    const m = s.match(/\b(\d{5})\b/g);
-    return m ? m[m.length - 1] : null;
+  const iD = lines.findIndex(isDate);
+  
+  // 🛡️ FILTRO DE SEGURIDAD PARA LÍNEAS PROHIBIDAS
+  const pickFolioSafe = (s) => {
+    const text = String(s).toLowerCase();
+    // Si la línea tiene estas palabras, NO es el folio, lo ignoramos.
+    if (/mesa|clientes|reimpresion|cp|tel|teléfono|articulos|orden|mesero/i.test(text)) return null;
+    
+    // Buscamos un bloque numérico de 4, 5 o 6 dígitos (como el 20002)
+    const m = text.match(/\b(\d{4,6})\b/g);
+    return m ? m[m.length - 1] : null; 
   };
 
-  for (let i = from; i <= to; i++) {
-    const c = pick5(lines[i]);
-    if (c) { dbgNote(`Folio 5d detectado @${i}: ${c}`); return c; }
+  // 2. INTENTO 1: Búsqueda por Anclaje (Debajo de la Hora o Fecha)
+  // En tu ticket, el folio está máximo 2 líneas después de la hora
+  if (iT >= 0 || iD >= 0) {
+    const anchor = Math.max(iT, iD);
+    const startSearch = anchor;
+    const endSearch = Math.min(lines.length - 1, anchor + 3);
+
+    for (let i = startSearch; i <= endSearch; i++) {
+      const c = pickFolioSafe(lines[i]);
+      if (c) { 
+        dbgNote(`Folio anclado hallado @${i}: ${c}`); 
+        return c; 
+      }
+    }
   }
 
-  for (let i = 0; i < Math.min(15, lines.length); i++) {
-    const m = lines[i].match(/\b(\d{3,7})\b/);
-    if (m) { dbgNote(`Folio alterno @${i}: ${m[1]}`); return m[1]; }
+  // 3. INTENTO 2: Búsqueda Inteligente (Rango amplio cerca del encabezado)
+  const from = iT >= 0 ? iT : 0;
+  const to = Math.min(lines.length - 1, from + 10);
+
+  for (let i = from; i <= to; i++) {
+    const c = pickFolioSafe(lines[i]);
+    if (c) { 
+      dbgNote(`Folio por proximidad hallado @${i}: ${c}`); 
+      return c; 
+    }
   }
-  dbgNote("Folio no encontrado");
+
+  // 4. INTENTO 3: Búsqueda de Emergencia (Si todo lo anterior falló)
+  for (let i = 0; i < Math.min(25, lines.length); i++) {
+    const m = pickFolioSafe(lines[i]);
+    if (m) { 
+      dbgNote(`Folio por búsqueda general @${i}: ${m}`); 
+      return m; 
+    }
+  }
+
+  dbgNote("Folio no encontrado tras filtros de seguridad");
   return "";
 }
 
@@ -133,7 +174,7 @@ function extractStore(rawText) {
    Prioridad 2: Etiqueta "TOTAL" (Limpia de palabras prohibidas)
    ============================================================ */
 function detectGrandTotal(lines) {
-    // Helpers internos
+    // --- Helpers internos ---
     const isCard = (s) => /\b(visa|master|amex|tarjeta|card)\b/i.test(s);
     
     const norm = (s) => String(s || "")
@@ -143,7 +184,6 @@ function detectGrandTotal(lines) {
         .trim();
 
     const grabLastMoney = (s) => {
-        // Busca el último monto con decimales en la línea
         const mm = String(s).match(/(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})|\d+(?:[.,]\d{2}))/g);
         if (!mm || !mm.length) return null;
         return normalizeNum(mm[mm.length - 1]);
@@ -151,79 +191,106 @@ function detectGrandTotal(lines) {
 
     let subtotal = null;
     let iva = null;
+    let propina = 0;
+    
+    // Regex para identificar las partes del ticket
     const RX_SUB = /\b(sub\s*[- ]?\s*total|subtotal)\b/i;
     const RX_IVA = /\biva\b|\bimpuesto\b/i;
+    const RX_TIP = /\b(propina|tip|gratuit|servicio)\b/i;
+    
+    // Lista negra para no confundir el TOTAL real con pagos o cambio
+    const BAD = /\b(cambio|efectivo|pago|cash|visa|master|amex)\b/i;
 
-    // --- PASO 1: Buscar Subtotal e IVA para cálculo forzado ---
+    // --- PASO 1: Escaneo Contable (Buscando la "Verdad" del ticket) ---
     for (let i = 0; i < lines.length; i++) {
-        const l0 = String(lines[i] || "");
+        const l0 = lines[i];
         if (isCard(l0)) continue;
 
+        // 1. Capturar Subtotal
         if (subtotal === null && RX_SUB.test(l0)) {
             subtotal = grabLastMoney(l0) ?? grabLastMoney(lines[i + 1] || "");
-            if (subtotal) dbgNote(`Subtotal hallado: ${subtotal}`);
         }
 
-        // Buscamos IVA (evitando líneas que ya digan TOTAL)
+        // 2. Capturar IVA
         if (iva === null && RX_IVA.test(l0) && !/total/i.test(l0)) {
             iva = grabLastMoney(l0) ?? grabLastMoney(lines[i + 1] || "");
-            if (iva) dbgNote(`IVA hallado: ${iva}`);
+        }
+
+        // 3. Capturar Propina (para saber si hay que restarla del total final)
+        if (RX_TIP.test(l0)) {
+            const mTip = grabLastMoney(l0) ?? grabLastMoney(lines[i + 1] || 0);
+            if (mTip) propina = mTip;
         }
     }
 
-    // REGLA DE ORO: Si tenemos ambos, esta suma manda (ignora propinas automáticamente)
-    const expected = (subtotal !== null && iva !== null) ? Number((subtotal + iva).toFixed(2)) : null;
+    // --- PASO 2: Reconstrucción Matemática (Subtotal + IVA) ---
+    const sumaContable = (subtotal !== null && iva !== null) ? Number((subtotal + iva).toFixed(2)) : null;
     
-    if (expected) {
-        dbgNote(`Suma Forzada (Sub+IVA): ${expected}`);
-        return expected; // Retorno inmediato: es el dato más seguro
+    if (sumaContable) {
+        dbgNote(`🛡️ Matemática: Subtotal(${subtotal}) + IVA(${iva}) = ${sumaContable}`);
     }
 
-    // --- PASO 2: Si no hay Sub+IVA, buscar etiqueta TOTAL limpia ---
-    // Lista negra: Si la línea tiene esto, NO es el total que buscamos
-    const BAD = /\b(subtotal|iva|impuesto|propina|tip|gratuit|cambio|efectivo|pago|visa|master)\b/i;
-
+    // --- PASO 3: Buscar etiqueta TOTAL y validar contra Propina ---
     const cands = [];
     for (let i = 0; i < lines.length; i++) {
-        const raw = String(lines[i] || "");
+        const raw = lines[i];
         const n = norm(raw);
 
-        // Si la línea contiene "TOTAL" y no contiene palabras de la lista negra
-        if (/\btotal\b/i.test(raw) && !BAD.test(n)) {
+        // Si la línea contiene "TOTAL" pero no es "SUBTOTAL" ni palabra de lista negra
+        if (/\btotal\b/i.test(raw) && !RX_SUB.test(raw) && !BAD.test(n)) {
             let v = grabLastMoney(raw);
-            // Si no hay monto en la misma línea, intentamos en la siguiente
-            if (v === null) v = grabLastMoney(lines[i + 1] || "");
+            
+            // Si el número está en la línea de abajo
+            if (v === null) {
+                const nextLine = lines[i + 1] || "";
+                if (!BAD.test(norm(nextLine)) && !RX_TIP.test(nextLine)) {
+                    v = grabLastMoney(nextLine);
+                }
+            }
 
             if (Number.isFinite(v) && v > 0) {
+                let finalValue = v;
                 let score = 100;
-                
-                // Si la línea es SOLO la palabra "total" o "total mxn", sube puntos
-                if (n === "total" || n === "total mxn" || n === "total m.n.") score += 20;
 
-                cands.push({ v, score });
-                dbgNote(`Candidato Total: ${v} (Score: ${score})`);
+                // ⚖️ LÓGICA ANTI-PROPINA: 
+                // Si el total que leyó el OCR es igual a la (SumaContable + Propina)
+                if (propina > 0 && sumaContable > 0) {
+                    const totalInflado = Number((sumaReal + propina).toFixed(2));
+                    // Si el error es menor a $1 peso, confirmamos que trae propina
+                    if (Math.abs(v - totalInflado) < 1.0) {
+                        finalValue = sumaContable; // "Limpiamos" el total quitando la propina
+                        score += 1000;
+                        dbgNote(`🎯 Propina detectada en Total. Limpiando a monto base: ${finalValue}`);
+                    }
+                }
+
+                // Si coincide con nuestra suma matemática exactamente, le damos mucha confianza
+                if (sumaContable && Math.abs(finalValue - sumaContable) < 1.0) {
+                    finalValue = sumaContable; // Preferimos el valor exacto de la suma
+                    score += 500;
+                }
+                
+                if (/^total\s*(mxn|m\.n\.)?$/i.test(n)) score += 50;
+
+                cands.push({ v: finalValue, score });
             }
         }
     }
 
-    // --- PASO 3: Decisión final ---
+    // --- PASO 4: Decisión Final ---
     if (cands.length > 0) {
-        // Ordenar por score descendente
         cands.sort((a, b) => b.score - a.score);
         return cands[0].v;
     }
 
-    // Si todo falla, intentar buscar el número más grande al final del ticket (Heurística de emergencia)
-    dbgNote("Buscando total por valor máximo...");
-    const allAmounts = lines.slice(-10).map(l => grabLastMoney(l)).filter(v => v !== null);
-    if (allAmounts.length > 0) {
-        return Math.max(...allAmounts);
+    // Si no encontró etiquetas de TOTAL, pero la suma matemática es sólida, devolvemos esa.
+    if (sumaContable && sumaContable > 0) {
+        dbgNote("⚠️ No se halló etiqueta TOTAL, usando Reconstrucción Matemática.");
+        return sumaContable;
     }
 
     return 0;
 }
-
-
 /* ============================================================
    ✅ MESERO MEJORADO (tolerante a OCR: MESER0, M E S E R O, etc.)
    - NO inventa: si no lo ve, regresa ""
@@ -382,44 +449,42 @@ async function callOpenAI(rawText) {
     throw new Error("No hay API KEY ni proxy configurado");
   }
 
-  // ✅ TU PROMPT MAESTRO INTEGRADO
-  const sysPrompt = `Actúa como un experto en contabilidad y OCR de tickets de restaurante.
-Tu objetivo es extraer el GRAN TOTAL de un ticket de consumo de forma infalible.
+ const sysPrompt = `Actúa como Auditor Contable de Applebee's.
+Tu misión es extraer datos de tickets con CERO margen de error.
 
-REGLAS CRÍTICAS DE NEGOCIO:
-1. El TOTAL siempre debe ser mayor o igual al SUBTOTAL.
-2. Ignora montos etiquetados como 'SUBTOTAL', 'IMPUESTOS', 'IVA', 'PROPINA', 'TIP' o 'GRATUITY'.
-3. Si hay varios montos, el GRAN TOTAL suele ser el número más grande cerca de la parte inferior.
-4. "total" debe ser el consumo real + impuestos, PERO SIN LA PROPINA.
-5. Devuelve los datos en formato JSON puro.
+REGLAS DE RAZONAMIENTO:
+1. El TOTAL PAGADO es siempre la suma de (Subtotal + IVA). 
+2. Si el ticket muestra un "Efectivo" o "Pago", ese suele ser el Total, pero confírmalo sumando los productos.
+3. El FOLIO es un número de 5 o 6 dígitos (ej. 20002), no lo confundas con la Mesa o el Mesero.
+4. Si el texto es ilegible o los números están cortados, responde: {"error": "low_quality"}.
 
-FORMATO DE SALIDA EXACTO (JSON):
+FORMATO DE SALIDA (JSON ESTRICTO):
 {
-  "folio": "string (solo números)",
+  "folio": "solo números",
   "fecha": "YYYY-MM-DD",
-  "total": number (ej. 150.50),
-  "subtotal": number,
-  "mesero": "string (nombre del mesero)"
+  "total": 0.00,
+  "subtotal": 0.00,
+  "iva": 0.00,
+  "mesero": "nombre",
+  "error": null
 }`;
 
-  const userPrompt = `Analiza el siguiente texto extraído por OCR del ticket:\n\n${rawText}\n\nExtrae los datos siguiendo tus reglas críticas.`;
+  const userPrompt = `Analiza este texto de ticket y extrae los datos. 
+  REVISA BIEN: No confundas el IVA (${rawText.match(/78/g) ? 'como el 78.07' : 'impuestos'}) con el TOTAL: \n\n${rawText}`;
 
   const started = performance.now();
-  setIABadge(null, 'IA procesando…');
+  setIABadge(null, 'IA Auditando…');
 
   try {
     let response;
     
-    // Si usas Proxy
     if (OPENAI_PROXY_ENDPOINT) {
       response = await fetch(OPENAI_PROXY_ENDPOINT, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: rawText, sys: sysPrompt })
       });
-    } 
-    // Si usas API Key directa
-    else {
+    } else {
       response = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: {
@@ -427,27 +492,32 @@ FORMATO DE SALIDA EXACTO (JSON):
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          model: "gpt-4o-mini", // El modelo más rápido y eficiente para esto
+          model: "gpt-4o-mini", // O "gpt-4o" para máxima potencia de visión
           messages: [
             { role: "system", content: sysPrompt },
             { role: "user", content: userPrompt }
           ],
-          temperature: 0.1, // Baja temperatura = Máxima precisión, cero creatividad
+          temperature: 0.0, // 0.0 para que sea lo más estricto y menos creativo posible
           response_format: { type: "json_object" }
         })
       });
     }
 
-    const took = Math.round(performance.now() - started);
     if (!response.ok) throw new Error(`Error IA: ${response.status}`);
 
     const data = await response.json();
+    const took = Math.round(performance.now() - started);
     setIABadge('ok', `${took}ms`);
     
-    // Extraer el contenido según sea Proxy o Directo
     const content = OPENAI_PROXY_ENDPOINT ? data : JSON.parse(data.choices[0].message.content);
     
-    dbgNote(`🤖 IA respondió: Total=${content.total}, Folio=${content.folio}`);
+    // 🛡️ FILTRO POST-IA: Si la IA detectó mala calidad, avisamos al sistema
+    if (content.error === "low_quality") {
+        dbgNote("⚠️ IA reporta baja calidad: No se confía en los números.");
+        return { ...content, total: 0, folio: "" }; 
+    }
+
+    dbgNote(`🤖 IA Auditó: Total=${content.total}, Folio=${content.folio}`);
     return content;
 
   } catch (e) {
@@ -455,6 +525,31 @@ FORMATO DE SALIDA EXACTO (JSON):
     console.error("Error en callOpenAI:", e);
     return null;
   }
+}
+
+function calcularTotalContable(subtotal, iva, propina, totalDetectado) {
+  // Paso A: Calcular la verdad matemática
+  const sumaReal = Number((subtotal + iva).toFixed(2));
+  
+  // Paso B: Si el total que leyó el OCR es igual a (Suma + Propina), 
+  // significa que el OCR leyó el monto con propina. Lo corregimos.
+  if (propina > 0 && totalDetectado > 0) {
+    const totalConPropina = Number((sumaReal + propina).toFixed(2));
+    
+    if (Math.abs(totalDetectado - totalConPropina) < 1.0) {
+      console.log("🛡️ Propina detectada en el Total. Extrayendo monto base...");
+      return sumaReal;
+    }
+  }
+
+  // Paso C: Si el total detectado es menor que el subtotal (error común de lectura de IVA)
+  if (totalDetectado > 0 && totalDetectado < subtotal) {
+    console.log("⚠️ Total detectado es menor al Subtotal. Usando Suma Contable.");
+    return sumaReal;
+  }
+
+  // Si no hay errores, devolvemos la suma contable como el dato más fiable
+  return sumaReal > 0 ? sumaReal : totalDetectado;
 }
 
 
@@ -499,14 +594,17 @@ window.processTicketWithIA = async function processTicketWithIA(file) {
   }
 
   // 2) Extracción Base (Heurística Local)
+  // Aquí usamos tus nuevas funciones optimizadas de Folio (Anclaje) y Total (Contable)
   let folio = extractFolio(lines);
   let fecha = extractDateISO(rawText);
-  let total = detectGrandTotal(lines);
+  let totalCalculado = detectGrandTotal(lines); // Nuestra lógica de Subtotal + IVA
   let mesero = extractMesero(rawText, lines);
   let store = extractStore(rawText);
   let sumaProductos = auditProductSum(lines);
 
-  // 🛡️ REGLA DE SANIDAD LOCAL: ¿El total es un falso positivo?
+  let total = totalCalculado;
+
+  // 🛡️ REGLA DE SANIDAD LOCAL: ¿El folio se coló como total?
   const totalEsDudoso = (total > 0 && total === Number(folio)) || (total >= 2024 && total <= 2026);
 
   if (totalEsDudoso) {
@@ -514,44 +612,33 @@ window.processTicketWithIA = async function processTicketWithIA(file) {
     total = 0; 
   }
 
-
-  // ============================================================
-  // 👇 AQUÍ VA EL CÓDIGO QUE ME PASASTE (PASO 3)
-  // ============================================================
+  // 3) REFUERZO CON IA (Cerebro de Decisión con Doble Blindaje)
   try {
     if (OPENAI_API_KEY || OPENAI_PROXY_ENDPOINT) {
-      const totalLocal = total; // Guardamos el total detectado localmente
-
-      if (total <= 0 || totalEsDudoso || !folio || !fecha) {
-        dbgNote("🤖 Llamando a refuerzo de IA (Verificación de montos)...");
+      // Llamamos a la IA si el total es bajo (posible IVA), es 0, o faltan datos
+      if (total <= 100 || !folio || !fecha) {
+        dbgNote("🤖 Llamando a refuerzo de IA (Auditoría de montos)...");
         
         const j = await callOpenAI(rawText); 
 
         if (j && typeof j === "object") {
+          // Completar datos si la IA los encontró y nosotros no
           if (!folio && j.folio) folio = String(j.folio).trim();
           if (!fecha && j.fecha) fecha = String(j.fecha).trim();
           if (!mesero && j.mesero) mesero = String(j.mesero).trim();
 
           const iaTotal = Number(j.total || 0);
-          const iaSubtotal = Number(j.subtotal || 0);
 
+          // 🛡️ DOBLE BLINDAJE: ¿A quién le creemos?
           if (iaTotal > 0) {
-            if (iaTotal > iaSubtotal) {
+            // Si nuestro cálculo matemático local dio un número sólido, lo mantenemos
+            if (totalCalculado > 0) {
+              total = totalCalculado;
+              dbgNote(`⚖️ Prioridad: Cálculo matemático Local (Sub+IVA): ${total}`);
+            } else {
+              // Si el local falló, usamos el de la IA
               total = iaTotal;
-              dbgNote(`🤖 IA Validada: Total $${iaTotal} > Subtotal $${iaSubtotal}`);
-            } 
-            else if (iaTotal === iaSubtotal && iaTotal > 0) {
-              dbgNote("⚠️ IA dio Total igual a Subtotal. Verificando contra local...");
-              if (sumaProductos > iaTotal) {
-                  total = sumaProductos;
-                  dbgNote(`🛡️ Auditoría rescató el total ($${total}) porque IA se quedó en Subtotal.`);
-              } else {
-                  total = iaTotal;
-              }
-            }
-            else {
-              dbgNote(`❌ IA descartada: Monto ilógico (T:$${iaTotal} S:$${iaSubtotal})`);
-              total = totalLocal > 0 ? totalLocal : sumaProductos;
+              dbgNote(`🚀 IA rescató el total: ${iaTotal}`);
             }
           }
         }
@@ -560,42 +647,18 @@ window.processTicketWithIA = async function processTicketWithIA(file) {
   } catch (e) {
     dbgNote("❌ Error en el refuerzo de IA");
   }
-  // 3) Refuerzo con IA (Usando el Prompt Maestro)
-  try {
-    if (OPENAI_API_KEY || OPENAI_PROXY_ENDPOINT) {
-      // Llamamos a la IA si el total es 0, es dudoso, o faltan datos clave
-      if (total <= 0 || !folio || !fecha) {
-        dbgNote("🤖 Llamando a refuerzo de IA con Prompt Maestro...");
-        
-        const j = await callOpenAI(rawText); // Aquí ya vive tu Prompt Maestro
-        
-        if (j && typeof j === "object") {
-          // Completar Folio, Fecha y Mesero si la heurística falló
-          if (!folio && j.folio) folio = String(j.folio).trim();
-          if (!fecha && j.fecha) fecha = String(j.fecha).trim();
-          if (!mesero && j.mesero) mesero = String(j.mesero).trim();
-          
-          // 🛡️ VALIDACIÓN CONTABLE: ¿Total >= Subtotal?
-          // Solo aceptamos el total de la IA si es lógico contablemente
-          const iaTotal = Number(j.total || 0);
-          const iaSubtotal = Number(j.subtotal || 0);
 
-          if (iaTotal > 0) {
-            if (iaTotal >= iaSubtotal) {
-              total = iaTotal;
-              dbgNote(`🤖 IA Validada: Total $${total} (Subtotal $${iaSubtotal})`);
-            } else {
-              dbgNote(`⚠️ IA ignorada: Total ($${iaTotal}) menor al Subtotal ($${iaSubtotal})`);
-            }
-          }
-        }
-      }
+  // 4) VALIDACIÓN FINAL: Auditoría de Productos (El "Último Filtro")
+  // Si la suma de platos individuales da un total coherente, esa es la verdad absoluta
+  if (sumaProductos > 0) {
+    const diff = Math.abs(total - sumaProductos);
+    if (diff > 2.00) { 
+      dbgNote(`⚖️ Ajustando total por suma de productos: ${sumaProductos} (Antes era ${total})`);
+      total = sumaProductos;
     }
-  } catch (e) {
-    dbgNote("❌ Error en refuerzo de IA");
   }
 
-  // 4) Limpieza y Normalización Final
+  // 5) Limpieza y Normalización Final
   if (!/^\d{3,10}$/.test(String(folio || ""))) {
     folio = String(folio || "").match(/\b\d{3,10}\b/)?.[0] || "";
   }
@@ -604,17 +667,11 @@ window.processTicketWithIA = async function processTicketWithIA(file) {
   total = Number(total || 0);
   mesero = mesero ? mesero.trim().toUpperCase() : "";
 
-  // 5) 🛡️ Blindaje de Auditoría (Cruce Final de Montos)
+  // 6) Blindaje de Auditoría para el Return
   let isAuditOk = true;
   if (sumaProductos > 0 && total > 0) {
-    const diferencia = Math.abs(total - sumaProductos);
-    // Tolerancia de 2 pesos por errores de redondeo de centavos
-    if (diferencia > 2.00) {
-      isAuditOk = false;
-      dbgNote(`❌ Auditoría fallida: Total=${total} vs SumaPlatos=${sumaProductos}`);
-    } else {
-      dbgNote("✅ Auditoría exitosa: Los montos coinciden.");
-    }
+    // Si después de todo el proceso el total sigue sin cuadrar con la suma de platos
+    if (Math.abs(total - sumaProductos) > 2.00) isAuditOk = false;
   }
 
   dbgDump();
@@ -628,7 +685,6 @@ window.processTicketWithIA = async function processTicketWithIA(file) {
     storeName: store.name,
     sumaAuditoria: sumaProductos,
     auditOk: isAuditOk,
-    // El ticket es válido solo si tiene folio, total y pasó la auditoría o la IA lo validó
     isValid: (folio.length >= 3 && total > 0 && isAuditOk)
   };
 };
